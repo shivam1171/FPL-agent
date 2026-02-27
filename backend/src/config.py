@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Application
     DEBUG: bool = False
-    CORS_ORIGINS: str = "http://localhost:5173, https://fpl-agent-yourname.vercel.app"
+    CORS_ORIGINS: str = "http://localhost:5173, https://fpl-agent.vercel.app"
 
 
 
