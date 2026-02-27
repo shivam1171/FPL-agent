@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # OpenAI API
     OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_MODEL: str = "gpt-5.2"
 
     # Security (optional - not currently used, but reserved for future JWT/session features)
     SECRET_KEY: str = "placeholder-secret-key-not-currently-used"
