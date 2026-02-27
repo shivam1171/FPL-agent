@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import SuggestionList from './SuggestionList';
 import { chatAPI } from '../../services/api';
+import ReactMarkdown from 'react-markdown';
 
 const QUICK_PROMPTS = [
   { label: "🛡️ Defensive upgrades", text: "Focus on defensive upgrades with good fixtures", type: "suggestion" },
@@ -212,7 +213,11 @@ const ChatInterface = ({ managerId, onGetSuggestions, initialSuggestions, loadin
         {messages.map((msg, index) => (
           <div key={index} className={`message ${msg.type}`}>
             <div className="message-content">
-              {msg.content && <p style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</p>}
+              {msg.content && (
+                <div className="markdown-content">
+                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                </div>
+              )}
               {msg.suggestions && (
                 <div className="embedded-suggestions">
                   <SuggestionList 

@@ -1522,3 +1522,38 @@ body {
   .watchlist-card { flex-direction: column; gap: 12px; align-items: flex-start; }
   .quick-prompts-bar { padding: 0 16px 8px; }
 }
+
+/* Markdown Rendering inside Chat */
+.markdown-content {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  margin-top: 4px;
+}
+.markdown-content p {
+  margin-bottom: 0.75rem;
+}
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+.markdown-content ul, .markdown-content ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+.markdown-content li {
+  margin-bottom: 0.25rem;
+}
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+.markdown-content strong {
+  color: var(--accent-green, #00ff87);
+  font-weight: 600;
+}
+.markdown-content em {
+  color: var(--text-secondary);
+}
