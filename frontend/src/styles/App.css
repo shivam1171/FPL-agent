@@ -888,10 +888,15 @@ body {
 }
 .message.user .message-content {
   background: var(--accent-green);
-  color: #000;
+  color: #0a1128;
   padding: 12px 18px;
   border-radius: 16px 16px 4px 16px;
-  font-weight: 500;
+  font-weight: 600;
+}
+.message.user .markdown-content,
+.message.user .markdown-content p,
+.message.user .markdown-content strong {
+  color: #0a1128 !important;
 }
 .message.agent .message-content {
   color: var(--text-primary);
