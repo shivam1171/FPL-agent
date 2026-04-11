@@ -144,7 +144,7 @@ const LeaguesView = ({ managerId }) => {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               <span>Previous: {league.entry_last_rank}</span>
-              <span>Total Entries: {league.limit === 0 ? 'Unlimited' : league.limit}</span>
+              <span>Total Entries: {league.max_entries == null || league.max_entries === 0 ? 'Unlimited' : league.max_entries.toLocaleString()}</span>
             </div>
           </div>
         ))}

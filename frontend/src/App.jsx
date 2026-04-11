@@ -84,7 +84,7 @@ function App() {
           <button className={`nav-tab ${view === 'leagues' ? 'active' : ''}`} onClick={() => setView('leagues')}>
             🏆 Competitions
           </button>
-          <button className={`nav-tab ${view === 'chat' ? 'active' : ''}`} onClick={() => handleGetSuggestions()}>
+          <button className={`nav-tab ${view === 'chat' ? 'active' : ''}`} onClick={() => view === 'chat' ? null : handleGetSuggestions()}>
             🤖 AI Advisor
           </button>
         </nav>
