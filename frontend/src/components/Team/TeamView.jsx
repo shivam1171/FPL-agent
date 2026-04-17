@@ -71,7 +71,7 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
   const [error, setError] = useState('');
   const [topPerformers, setTopPerformers] = useState([]);
   const [activeTab, setActiveTab] = useState('pitch');
-  const [showWatchlistHelp, setShowWatchlistHelp] = useState(false);
+
   const [compareMode, setCompareMode] = useState(false);
   const [compareA, setCompareA] = useState(null);
   const [compareB, setCompareB] = useState(null);
@@ -140,14 +140,14 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
     return { cls: 'form-poor', pct: Math.max(f * 20, 5) };
   };
 
-  const renderPlayerCard = (player, pick, isBench = false) => {
+  const renderPlayerCard = (player, pick, isBench = false, isPitchMode = false) => {
     const form = getFormLevel(player.form);
     const isWatched = watchlist.find(p => p.id === player.id);
     const isCompareSelected = compareMode && (compareA?.id === player.id || compareB?.id === player.id);
     return (
       <div 
         key={player.id} 
-        className={`player-card ${isBench ? 'bench' : ''} ${isCompareSelected ? 'compare-selected' : ''}`} 
+        className={`player-card ${isBench ? 'bench' : ''} ${isCompareSelected ? 'compare-selected' : ''} ${isPitchMode ? 'pitch-mode' : ''}`} 
         onClick={() => compareMode ? handleCompareSelect(player) : toggleWatchlist(player)} 
         title={compareMode ? "Click to compare" : "Click to add/remove from watchlist"}
       >
@@ -173,8 +173,8 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
             {isWatched && <span style={{ fontSize: '0.7rem' }}>👁️</span>}
           </div>
           <div className="player-info">
-            <span>{player.position} • {player.team_name}</span>
-            <span>£{(player.now_cost / 10).toFixed(1)}m</span>
+            <span>{player.position} {!isPitchMode && `• ${player.team_name}`}</span>
+            {isPitchMode ? <span className="pts-pill">{player.total_points} pts</span> : <span>£{(player.now_cost / 10).toFixed(1)}m</span>}
           </div>
           <div className="player-stats">
             <span>Form: {player.form}</span>
@@ -191,7 +191,11 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
   const totalValue = (summary.value / 10).toFixed(1);
   const bank = (summary.bank / 10).toFixed(1);
   const avgForm = (players.reduce((acc, p) => acc + parseFloat(p.player.form || 0), 0) / players.length).toFixed(1);
-
+  const freeTransfers = team.transfers?.error 
+    ? <span style={{ cursor: 'help', color: 'var(--accent-red)', fontSize: '0.9rem' }} title={`Not available: ${team.transfers.error}`}>⚠️ N/A</span>
+    : team.transfers?.limit !== undefined 
+      ? Math.max(0, team.transfers.limit - (team.transfers.made || 0)) 
+      : '—';
   // Generate synthetic form trend from available data for sparklines
   const getFormTrend = (player) => {
     const form = parseFloat(player.form || 0);
@@ -226,38 +230,32 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
       <div className="team-header-section">
         <div className="team-header">
           <h2>Your Squad <span className="gw-label">GW{gameweek}</span></h2>
-          <div className="team-stats">
+          <div className="team-stats animate-stagger">
             <div className="stat highlight"><span>Total Points</span><strong>{summary.total_points}</strong></div>
             <div className="stat"><span>Team Value</span><strong>£{totalValue}m</strong></div>
             <div className="stat"><span>In the Bank</span><strong>£{bank}m</strong></div>
+            <div className="stat"><span>Free Transfers</span><strong>{freeTransfers}</strong></div>
+            <div className="stat"><span>GW Transfers</span><strong>{summary.event_transfers}</strong></div>
             <div className="stat"><span>Overall Rank</span><strong>{summary.rank?.toLocaleString() || '—'}</strong></div>
             <div className="stat"><span>Avg Form</span><strong>{avgForm}</strong></div>
-            <div className="stat"><span>GW Transfers</span><strong>{summary.event_transfers}</strong></div>
           </div>
         </div>
       </div>
 
       {/* Quick Actions */}
-      <div className="quick-actions">
-        <button className="quick-action-btn" onClick={onGetSuggestions}>
+      <div className="quick-actions animate-stagger" style={{ justifyContent: 'center' }}>
+        <button className="quick-action-btn" onClick={onGetSuggestions} style={{ flex: '0 1 auto' }}>
           <span className="action-icon">🤖</span>
           <span className="action-text">
             <span className="action-title">AI Transfer Suggestions</span>
             <span className="action-desc">Get GPT-powered recommendations{watchlist.length > 0 ? ` (${watchlist.length} watched)` : ''}</span>
           </span>
         </button>
-        <button className="quick-action-btn" onClick={() => setActiveTab(activeTab === 'analytics' ? 'pitch' : 'analytics')}>
+        <button className="quick-action-btn" onClick={() => setActiveTab(activeTab === 'analytics' ? 'pitch' : 'analytics')} style={{ flex: '0 1 auto' }}>
           <span className="action-icon">📊</span>
           <span className="action-text">
             <span className="action-title">Squad Analytics</span>
             <span className="action-desc">View top performers & insights</span>
-          </span>
-        </button>
-        <button className="quick-action-btn" onClick={() => setActiveTab(activeTab === 'list' ? 'pitch' : 'list')}>
-          <span className="action-icon">📋</span>
-          <span className="action-text">
-            <span className="action-title">List View</span>
-            <span className="action-desc">Detailed squad breakdown</span>
           </span>
         </button>
       </div>
@@ -265,78 +263,68 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
       {/* Watchlist Section */}
       <div className="watchlist-section">
         <div className="section-heading">
-          <h3>
+          <h3 style={{ display: 'flex', alignItems: 'center' }}>
             <span className="section-icon">👁️</span> Watchlist
-            <button 
-              className="watchlist-help-toggle"
-              onClick={() => setShowWatchlistHelp(!showWatchlistHelp)}
-              title="Learn about the Watchlist"
-            >
-              {showWatchlistHelp ? '✕' : '?'}
-            </button>
-          </h3>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {watchlist.length >= 2 && (
-              <button 
-                className={`watchlist-action-btn ${compareMode ? 'active' : ''}`}
-                onClick={() => { setCompareMode(!compareMode); setCompareA(null); setCompareB(null); }}
-              >
-                ⚖️ {compareMode ? 'Exit Compare' : 'Compare'}
-              </button>
-            )}
-            <span className="section-badge">{watchlist.length} players</span>
-          </div>
-        </div>
-
-        {/* Watchlist Help / Instructions */}
-        {showWatchlistHelp && (
-          <div className="watchlist-instructions">
-            <div className="wi-grid">
-              <div className="wi-item">
-                <span className="wi-icon">👆</span>
-                <div>
-                  <strong>Add to Watchlist</strong>
-                  <p>Click any player card to add or remove them from your watchlist.</p>
-                </div>
-              </div>
-              <div className="wi-item">
-                <span className="wi-icon">🤖</span>
-                <div>
-                  <strong>AI-Aware</strong>
-                  <p>Your watchlist is automatically shared with the AI advisor. It will factor in the players you're monitoring when generating transfer suggestions.</p>
-                </div>
-              </div>
-              <div className="wi-item">
-                <span className="wi-icon">📈</span>
-                <div>
-                  <strong>Price Alerts</strong>
-                  <p>See predicted price changes based on net transfer activity. Green arrows = price likely rising, red = likely falling.</p>
-                </div>
-              </div>
-              <div className="wi-item">
-                <span className="wi-icon">📊</span>
-                <div>
-                  <strong>Form Trends</strong>
-                  <p>Mini sparkline charts show each player's form trajectory — see at a glance who's trending up or down.</p>
-                </div>
-              </div>
-              <div className="wi-item">
-                <span className="wi-icon">⚖️</span>
-                <div>
-                  <strong>Compare Players</strong>
-                  <p>Click "Compare" then select two players from your squad to see a detailed side-by-side stat comparison.</p>
-                </div>
-              </div>
-              <div className="wi-item">
-                <span className="wi-icon">💾</span>
-                <div>
-                  <strong>Persisted</strong>
-                  <p>Your watchlist is saved locally — it will survive closing and reopening your browser.</p>
+            <div className="watchlist-help-container">
+              <div className="watchlist-help-toggle" title="Learn about the Watchlist">?</div>
+              <div className="watchlist-instructions-tooltip">
+                <div className="wi-grid">
+                  <div className="wi-item">
+                    <span className="wi-icon">👆</span>
+                    <div>
+                      <strong>Add to Watchlist</strong>
+                      <p>Click any player card to add or remove them from your watchlist.</p>
+                    </div>
+                  </div>
+                  <div className="wi-item">
+                    <span className="wi-icon">🤖</span>
+                    <div>
+                      <strong>AI-Aware</strong>
+                      <p>Your watchlist is automatically shared with the AI advisor. It will factor in the players you're monitoring when generating transfer suggestions.</p>
+                    </div>
+                  </div>
+                  <div className="wi-item">
+                    <span className="wi-icon">📈</span>
+                    <div>
+                      <strong>Price Alerts</strong>
+                      <p>See predicted price changes based on net transfer activity. Green arrows = price likely rising, red = likely falling.</p>
+                    </div>
+                  </div>
+                  <div className="wi-item">
+                    <span className="wi-icon">📊</span>
+                    <div>
+                      <strong>Form Trends</strong>
+                      <p>Mini sparkline charts show each player's form trajectory — see at a glance who's trending up or down.</p>
+                    </div>
+                  </div>
+                  <div className="wi-item">
+                    <span className="wi-icon">⚖️</span>
+                    <div>
+                      <strong>Compare Players</strong>
+                      <p>Click "Compare" then select two players from your squad to see a detailed side-by-side stat comparison.</p>
+                    </div>
+                  </div>
+                  <div className="wi-item">
+                    <span className="wi-icon">💾</span>
+                    <div>
+                      <strong>Persisted</strong>
+                      <p>Your watchlist is saved locally — it will survive closing and reopening your browser.</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
+          </h3>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button 
+              className={`watchlist-action-btn ${compareMode ? 'active' : ''}`}
+              onClick={() => { setCompareMode(!compareMode); setCompareA(null); setCompareB(null); }}
+            >
+              ⚖️ {compareMode ? 'Exit Compare' : 'Compare'}
+            </button>
+            <span className="section-badge">{watchlist.length} players</span>
           </div>
-        )}
+        </div>
 
         {/* Compare Mode Banner */}
         {compareMode && (
@@ -458,15 +446,66 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
         )}
       </div>
 
+      {/* View Tabs */}
+      <div className="view-mode-tabs" style={{ display: 'flex', gap: '8px', marginBottom: '24px', justifyContent: 'center' }}>
+        <button className="nav-tab" onClick={() => setActiveTab('pitch')} style={{ background: activeTab === 'pitch' ? 'var(--accent-cyan)' : 'var(--bg-elevated)', color: activeTab === 'pitch' ? '#000' : 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.1)' }}>🏟️ Pitch View</button>
+        <button className="nav-tab" onClick={() => setActiveTab('grid')} style={{ background: activeTab === 'grid' ? 'var(--accent-cyan)' : 'var(--bg-elevated)', color: activeTab === 'grid' ? '#000' : 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.1)' }}>🔲 Grid View</button>
+        <button className="nav-tab" onClick={() => setActiveTab('list')} style={{ background: activeTab === 'list' ? 'var(--accent-cyan)' : 'var(--bg-elevated)', color: activeTab === 'list' ? '#000' : 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.1)' }}>📋 List View</button>
+      </div>
+
       {/* Active Tab Content */}
-      {activeTab === 'pitch' && (
+      {activeTab === 'pitch' && (() => {
+        const fwd = starters.filter(p => p.player.position === 'FWD');
+        const mid = starters.filter(p => p.player.position === 'MID');
+        const def = starters.filter(p => p.player.position === 'DEF');
+        const gkp = starters.filter(p => p.player.position === 'GKP');
+
+        return (
+          <>
+            <div className="section-heading">
+              <h3><span className="section-icon">⚽</span> Starting XI</h3>
+              <span className="section-badge">{starters.length} players</span>
+            </div>
+            
+            <div className="pitch-container animate-stagger">
+              <div className="pitch-box-top"></div>
+              <div className="pitch-box-bottom"></div>
+              
+              <div className="pitch-row fwd-row">
+                {fwd.map(({ player, pick }) => renderPlayerCard(player, pick, false, true))}
+              </div>
+              <div className="pitch-row mid-row">
+                {mid.map(({ player, pick }) => renderPlayerCard(player, pick, false, true))}
+              </div>
+              <div className="pitch-row def-row">
+                {def.map(({ player, pick }) => renderPlayerCard(player, pick, false, true))}
+              </div>
+              <div className="pitch-row gkp-row">
+                {gkp.map(({ player, pick }) => renderPlayerCard(player, pick, false, true))}
+              </div>
+            </div>
+
+            <div>
+              <div className="section-heading">
+                <h3><span className="section-icon">🔄</span> Bench</h3>
+                <span className="section-badge">{bench.length} players</span>
+              </div>
+              <div className="players-grid animate-stagger">
+                {bench.map(({ player, pick }) => renderPlayerCard(player, pick, true, false))}
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {activeTab === 'grid' && (
         <>
           <div>
             <div className="section-heading">
               <h3><span className="section-icon">⚽</span> Starting XI</h3>
               <span className="section-badge">{starters.length} players</span>
             </div>
-            <div className="players-grid">
+            <div className="players-grid animate-stagger">
               {starters.map(({ player, pick }) => renderPlayerCard(player, pick))}
             </div>
           </div>
@@ -475,7 +514,7 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
               <h3><span className="section-icon">🔄</span> Bench</h3>
               <span className="section-badge">{bench.length} players</span>
             </div>
-            <div className="players-grid">
+            <div className="players-grid animate-stagger">
               {bench.map(({ player, pick }) => renderPlayerCard(player, pick, true))}
             </div>
           </div>

@@ -46,6 +46,20 @@ async def get_team(
         # Get team picks
         team_picks = await client.get_team_picks(manager_id, current_gw)
 
+        # Try to get transfer info from my-team
+        transfers_info = {}
+        try:
+            my_team = await client.get_my_team(manager_id)
+            transfers_info = my_team.transfers
+        except Exception as e:
+            if hasattr(e, 'response'):
+                logger.warning(f"Could not fetch my-team data for transfers: {e}. BODY: {e.response.text}")
+                status_code = e.response.status_code
+                transfers_info = {"error": f"API Error {status_code}"}
+            else:
+                logger.warning(f"Could not fetch my-team data for transfers: {e}")
+                transfers_info = {"error": str(e) or "Failed to fetch"}
+
         # Get all players to map full data
         all_players = await client.get_all_players()
         players_map = {p.id: p for p in all_players}
@@ -63,7 +77,8 @@ async def get_team(
         return {
             "summary": team_summary.model_dump(),
             "gameweek": current_gw,
-            "players": team_players
+            "players": team_players,
+            "transfers": transfers_info
         }
 
     except HTTPException:

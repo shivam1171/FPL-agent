@@ -4,7 +4,7 @@
 import React from 'react';
 import SuggestionCard from './SuggestionCard';
 
-const SuggestionList = ({ suggestions, loading, embedded = false, onReplace }) => {
+const SuggestionList = ({ suggestions, loading, embedded = false, onReplace, onExecute }) => {
   if (loading) {
     return (
       <div className="suggestions-loading">
@@ -36,6 +36,7 @@ const SuggestionList = ({ suggestions, loading, embedded = false, onReplace }) =
             key={index}
             suggestion={suggestion}
             onReplace={onReplace}
+            onExecute={onExecute}
           />
         ))}
       </div>

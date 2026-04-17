@@ -72,51 +72,54 @@ function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="app-header-left">
-          <span className="app-logo">⚽ FPL Agent</span>
-          <h1>Manager #{managerId}</h1>
-        </div>
-        <nav className="header-nav">
-          <button className={`nav-tab ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}>
-            🏟️ Dashboard
-          </button>
-          <button className={`nav-tab ${view === 'leagues' ? 'active' : ''}`} onClick={() => setView('leagues')}>
-            🏆 Competitions
-          </button>
-          <button className={`nav-tab ${view === 'chat' ? 'active' : ''}`} onClick={() => view === 'chat' ? null : handleGetSuggestions()}>
-            🤖 AI Advisor
-          </button>
-        </nav>
-        <div className="header-actions">
-          {watchlist.length > 0 && <span className="gw-badge" title="Players on watchlist">👁️ {watchlist.length}</span>}
-          {gameweek > 0 && <span className="gw-badge">GW {gameweek}</span>}
-          <button className="back-btn" onClick={handleLogout}>Logout</button>
-        </div>
-      </header>
+      <div className="app-header-container animate-stagger">
+        <header className="app-header">
+          <div className="app-header-left">
+            <span className="app-logo">⚽ FPL Agent</span>
+            <h1>Manager #{managerId}</h1>
+          </div>
+          <nav className="header-nav">
+            <button className={`nav-tab ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}>
+              🏟️ Dashboard
+            </button>
+            <button className={`nav-tab ${view === 'leagues' ? 'active' : ''}`} onClick={() => setView('leagues')}>
+              🏆 Competitions
+            </button>
+            <button className={`nav-tab ${view === 'chat' ? 'active' : ''}`} onClick={() => setView('chat')}>
+              🤖 AI Advisor
+            </button>
+          </nav>
+          <div className="header-actions">
+            {watchlist.length > 0 && <span className="gw-badge" title="Players on watchlist">👁️ {watchlist.length}</span>}
+            {gameweek > 0 && <span className="gw-badge">GW {gameweek}</span>}
+            <button className="back-btn" onClick={handleLogout}>Logout</button>
+          </div>
+        </header>
+      </div>
 
       <main className="app-main">
-        {view === 'team' && (
+        <div style={{ display: view === 'team' ? 'block' : 'none', height: '100%' }}>
           <TeamView 
             managerId={managerId} 
             onGetSuggestions={() => handleGetSuggestions()} 
             watchlist={watchlist}
             setWatchlist={setWatchlist}
           />
-        )}
-        {view === 'chat' && (
+        </div>
+        <div style={{ display: view === 'chat' ? 'block' : 'none', height: '100%' }}>
           <ChatInterface 
             managerId={managerId}
+            gameweek={gameweek}
             onGetSuggestions={handleGetSuggestions}
             initialSuggestions={initialSuggestions}
             loading={loadingSuggestions}
             onBack={handleBackToTeam}
             watchlist={watchlist}
           />
-        )}
-        {view === 'leagues' && (
+        </div>
+        <div style={{ display: view === 'leagues' ? 'block' : 'none', height: '100%' }}>
           <LeaguesView managerId={managerId} />
-        )}
+        </div>
       </main>
     </div>
   );

@@ -67,13 +67,15 @@ class TeamPick(BaseModel):
     multiplier: int = Field(..., description="Point multiplier (2=captain, 3=triple captain, 0=benched)")
     is_captain: bool = Field(..., description="Whether player is captain")
     is_vice_captain: bool = Field(..., description="Whether player is vice captain")
+    selling_price: Optional[int] = Field(None, description="Selling price at time of request")
+    purchase_price: Optional[int] = Field(None, description="Purchase price of the player")
 
 
 class UserTeam(BaseModel):
     """User's FPL team structure."""
 
     picks: List[TeamPick] = Field(..., description="Player picks")
-    chips: List[str] = Field(default_factory=list, description="Active chips")
+    chips: List[dict] = Field(default_factory=list, description="Active chips")
     transfers: dict = Field(default_factory=dict, description="Transfer information")
 
 

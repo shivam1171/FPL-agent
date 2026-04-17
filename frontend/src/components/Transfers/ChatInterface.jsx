@@ -3,7 +3,8 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import SuggestionList from './SuggestionList';
-import { chatAPI } from '../../services/api';
+import ApprovalModal from './ApprovalModal';
+import { chatAPI, transferAPI } from '../../services/api';
 import ReactMarkdown from 'react-markdown';
 
 const QUICK_PROMPTS = [
@@ -22,11 +23,12 @@ const QUESTION_PROMPTS = [
   { label: "🏆 My rank", text: "What changes would help me improve my overall rank the most?" },
 ];
 
-const ChatInterface = ({ managerId, onGetSuggestions, initialSuggestions, loading, onBack, watchlist = [] }) => {
+const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestions, loading, onBack, watchlist = [] }) => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
-  const [promptCategory, setPromptCategory] = useState('questions'); // 'questions' or 'suggestions'
+  const [promptCategory, setPromptCategory] = useState('questions');
+  const [approvalTarget, setApprovalTarget] = useState(null);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -162,6 +164,43 @@ const ChatInterface = ({ managerId, onGetSuggestions, initialSuggestions, loadin
     }
   };
 
+  const handleExecute = (suggestion) => {
+    setApprovalTarget(suggestion);
+  };
+
+  const handleConfirmExecute = async () => {
+    if (!approvalTarget) return;
+    const suggestion = approvalTarget;
+    setApprovalTarget(null);
+
+    setMessages(prev => [...prev, {
+      type: 'user',
+      content: `✅ Execute: ${suggestion.player_out.web_name} → ${suggestion.player_in.web_name}`,
+    }]);
+
+    try {
+      const result = await transferAPI.executeTransfer(
+        managerId,
+        gameweek,
+        [{ player_in_id: suggestion.player_in.id, player_out_id: suggestion.player_out.id }],
+        null,
+      );
+
+      setMessages(prev => [...prev, {
+        type: 'agent',
+        content: result.success
+          ? `🎉 **Transfer confirmed!** ${suggestion.player_out.web_name} is out, ${suggestion.player_in.web_name} is in. Good luck this gameweek!`
+          : `❌ Transfer failed: ${result.message || 'Unknown error. Please try again on the FPL website.'}`,
+      }]);
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err.message || 'Unexpected error.';
+      setMessages(prev => [...prev, {
+        type: 'agent',
+        content: `❌ Transfer failed: ${detail}`,
+      }]);
+    }
+  };
+
   // Build watchlist-aware prompt lists
   const allQuestionPrompts = watchlist.length > 0 ? [
     { label: `👁️ Watchlist analysis`, text: `Analyze the players on my watchlist: ${watchlist.map(p => p.web_name).join(', ')}. Should I keep, sell, or buy any of them?` },
@@ -207,6 +246,17 @@ const ChatInterface = ({ managerId, onGetSuggestions, initialSuggestions, loadin
                 <button onClick={() => sendChatMessage("What's my team's biggest weakness?")}>Team weaknesses?</button>
               </div>
             </div>
+            <div className="chat-example-questions" style={{ marginTop: '24px' }}>
+              <span className="chat-example-label">Or get started straight away:</span>
+              <div className="chat-examples">
+                <button 
+                  onClick={() => onGetSuggestions()}
+                  style={{ background: 'linear-gradient(135deg, var(--accent-green), var(--accent-emerald))', color: '#000', fontWeight: 'bold' }}
+                >
+                  🤖 Generate Transfer Suggestions
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -225,6 +275,7 @@ const ChatInterface = ({ managerId, onGetSuggestions, initialSuggestions, loadin
                     loading={false}
                     embedded={true}
                     onReplace={handleReplace}
+                    onExecute={handleExecute}
                   />
                 </div>
               )}
@@ -290,6 +341,15 @@ const ChatInterface = ({ managerId, onGetSuggestions, initialSuggestions, loadin
           Send
         </button>
       </form>
+
+      {approvalTarget && (
+        <ApprovalModal
+          suggestion={approvalTarget}
+          gameweek={gameweek}
+          onConfirm={handleConfirmExecute}
+          onCancel={() => setApprovalTarget(null)}
+        />
+      )}
     </div>
   );
 };

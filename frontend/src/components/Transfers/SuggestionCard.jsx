@@ -3,7 +3,7 @@
  */
 import React from 'react';
 
-const SuggestionCard = ({ suggestion, onReplace }) => {
+const SuggestionCard = ({ suggestion, onReplace, onExecute }) => {
   const playerOut = suggestion.player_out;
   const playerIn = suggestion.player_in;
 
@@ -122,20 +122,32 @@ const SuggestionCard = ({ suggestion, onReplace }) => {
            <span>Remaining: £{suggestion.bank_after.toFixed(1)}m</span>
       </div>
 
-      {onReplace && (
+      {(onReplace || onExecute) && (
         <div className="card-actions-bottom">
-           <button 
-               className="replace-btn" 
-               onClick={() => onReplace(suggestion)}
-               title="Request a completely different transfer option to replace this one."
-           >
-               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                   <polyline points="23 4 23 10 17 10"></polyline>
-                   <polyline points="1 20 1 14 7 14"></polyline>
-                   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-               </svg>
-               Replace this option
-           </button>
+           {onExecute && (
+             <button 
+                 className="execute-btn" 
+                 onClick={() => onExecute(suggestion)}
+                 title="Make this transfer right now in FPL"
+                 style={{ background: 'var(--accent-green)', color: '#000', fontWeight: 'bold' }}
+             >
+                 ✅ Approve & Execute
+             </button>
+           )}
+           {onReplace && (
+             <button 
+                 className="replace-btn" 
+                 onClick={() => onReplace(suggestion)}
+                 title="Request a completely different transfer option to replace this one."
+             >
+                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                     <polyline points="23 4 23 10 17 10"></polyline>
+                     <polyline points="1 20 1 14 7 14"></polyline>
+                     <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                 </svg>
+                 Replace this option
+             </button>
+           )}
         </div>
       )}
     </div>

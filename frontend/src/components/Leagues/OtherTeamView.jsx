@@ -45,9 +45,9 @@ const OtherTeamView = ({ managerId, managerName, onBack }) => {
     return 'injured';
   };
 
-  const renderPlayerCard = (player, pick, isBench = false) => {
+  const renderPlayerCard = (player, pick, isBench = false, isPitchMode = false) => {
     return (
-      <div key={player.id} className={`player-card ${isBench ? 'bench' : ''}`}>
+      <div key={player.id} className={`player-card ${isBench ? 'bench' : ''} ${isPitchMode ? 'pitch-mode' : ''}`}>
         <div className={`status-dot ${getStatusClass(player.status)}`}></div>
         <div className="player-visual-top">
           <img 
@@ -69,8 +69,8 @@ const OtherTeamView = ({ managerId, managerName, onBack }) => {
             {pick?.is_vice_captain && <span className="badge vice">VC</span>}
           </div>
           <div className="player-info">
-            <span>{player.position} • {player.team_name}</span>
-            <span>£{(player.now_cost / 10).toFixed(1)}m</span>
+            <span>{player.position} {!isPitchMode && `• ${player.team_name}`}</span>
+            {isPitchMode ? <span className="pts-pill">{player.total_points} pts</span> : <span>£{(player.now_cost / 10).toFixed(1)}m</span>}
           </div>
           <div className="player-stats">
             <span>Pts: {player.total_points}</span>
@@ -105,6 +105,10 @@ const OtherTeamView = ({ managerId, managerName, onBack }) => {
           <span className="action-icon">🏟️</span>
           <span className="action-text"><span className="action-title">Pitch View</span></span>
         </button>
+        <button className={`quick-action-btn ${activeTab === 'grid' ? 'active' : ''}`} onClick={() => setActiveTab('grid')}>
+          <span className="action-icon">🔲</span>
+          <span className="action-text"><span className="action-title">Grid View</span></span>
+        </button>
         <button className={`quick-action-btn ${activeTab === 'list' ? 'active' : ''}`} onClick={() => setActiveTab('list')}>
           <span className="action-icon">📋</span>
           <span className="action-text"><span className="action-title">List View</span></span>
@@ -112,14 +116,58 @@ const OtherTeamView = ({ managerId, managerName, onBack }) => {
       </div>
 
       {/* Active Tab Content */}
-      {activeTab === 'pitch' && (
+      {activeTab === 'pitch' && (() => {
+        const fwd = starters.filter(p => p.player.position === 'FWD');
+        const mid = starters.filter(p => p.player.position === 'MID');
+        const def = starters.filter(p => p.player.position === 'DEF');
+        const gkp = starters.filter(p => p.player.position === 'GKP');
+
+        return (
+          <>
+            <div className="section-heading">
+              <h3><span className="section-icon">⚽</span> Starting XI</h3>
+              <span className="section-badge">{starters.length} players</span>
+            </div>
+            
+            <div className="pitch-container animate-stagger">
+              <div className="pitch-box-top"></div>
+              <div className="pitch-box-bottom"></div>
+              
+              <div className="pitch-row fwd-row">
+                {fwd.map(({ player, pick }) => renderPlayerCard(player, pick, false, true))}
+              </div>
+              <div className="pitch-row mid-row">
+                {mid.map(({ player, pick }) => renderPlayerCard(player, pick, false, true))}
+              </div>
+              <div className="pitch-row def-row">
+                {def.map(({ player, pick }) => renderPlayerCard(player, pick, false, true))}
+              </div>
+              <div className="pitch-row gkp-row">
+                {gkp.map(({ player, pick }) => renderPlayerCard(player, pick, false, true))}
+              </div>
+            </div>
+
+            <div>
+              <div className="section-heading">
+                <h3><span className="section-icon">🔄</span> Bench</h3>
+                <span className="section-badge">{bench.length} players</span>
+              </div>
+              <div className="players-grid animate-stagger">
+                {bench.map(({ player, pick }) => renderPlayerCard(player, pick, true, false))}
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {activeTab === 'grid' && (
         <>
           <div>
             <div className="section-heading">
               <h3><span className="section-icon">⚽</span> Starting XI</h3>
               <span className="section-badge">{starters.length} players</span>
             </div>
-            <div className="players-grid">
+            <div className="players-grid animate-stagger">
               {starters.map(({ player, pick }) => renderPlayerCard(player, pick))}
             </div>
           </div>
@@ -128,7 +176,7 @@ const OtherTeamView = ({ managerId, managerName, onBack }) => {
               <h3><span className="section-icon">🔄</span> Bench</h3>
               <span className="section-badge">{bench.length} players</span>
             </div>
-            <div className="players-grid">
+            <div className="players-grid animate-stagger">
               {bench.map(({ player, pick }) => renderPlayerCard(player, pick, true))}
             </div>
           </div>

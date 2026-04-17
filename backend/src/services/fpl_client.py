@@ -26,9 +26,12 @@ class FPLClient:
         self.cookie = cookie
         self.csrf_token = None
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "Content-Type": "application/json",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "Referer": "https://fantasy.premierleague.com/",
+            "Origin": "https://fantasy.premierleague.com",
+            "Accept-Language": "en-US,en;q=0.9"
         }
         if cookie:
             self.headers["Cookie"] = cookie
@@ -341,3 +344,47 @@ class FPLClient:
         """Convert element_type to position name."""
         positions = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
         return positions.get(element_type, "UNK")
+
+    async def execute_transfers(self, entry: int, event: int, transfers: List[Dict[str, int]], chip: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Execute transfers on the official FPL API.
+
+        Args:
+            entry: FPL manager ID
+            event: The gameweek ID to apply the transfer to
+            transfers: List of transfer objects with element_in, element_out, purchase_price, selling_price
+            chip: Optional chip to play (e.g. wildcard, freehit)
+
+        Returns:
+            JSON response from FPL
+        """
+        if not self.cookie or not self.csrf_token:
+            raise ValueError("Authentication and CSRF token required to execute transfers")
+
+        headers = self.headers.copy()
+        headers["X-CSRFToken"] = self.csrf_token
+
+        payload = {
+            "chip": chip,
+            "entry": entry,
+            "event": event,
+            "transfers": transfers
+        }
+
+        logger.info(f"Executing transfer payload: {payload}")
+
+        async with httpx.AsyncClient() as client:
+            # Note: Unofficial write endpoints often omit the trailing slash, or use /squad/transfers/
+            response = await client.post(
+                "https://fantasy.premierleague.com/api/transfers/",
+                headers=headers,
+                json=payload,
+                timeout=15.0
+            )
+            
+            # If standard endpoint fails, many undocumented endpoints return specific error body
+            if response.status_code >= 400:
+                logger.error(f"FPL Transfer failed with status {response.status_code}: {response.text}")
+                response.raise_for_status()
+                
+            return response.json()

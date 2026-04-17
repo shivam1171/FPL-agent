@@ -106,6 +106,19 @@ export const transferAPI = {
     });
     return response.data;
   },
+
+  /**
+   * Execute transfer on FPL
+   */
+  executeTransfer: async (managerId, gameweek, transfers, chip = null) => {
+    const response = await api.post('/transfers/execute', {
+      manager_id: parseInt(managerId),
+      gameweek: parseInt(gameweek),
+      transfers,
+      chip,
+    });
+    return response.data;
+  },
 };
 
 /**
