@@ -1,6 +1,14 @@
 """
 FastAPI application entry point for FPL Agent.
 """
+import asyncio
+import sys
+
+if sys.platform == "win32":
+    # Set Proactor policy before any asyncio loop is created. Selector loops on
+    # Windows can't spawn subprocesses, which Playwright's driver requires.
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from fastapi import FastAPI
 import warnings
 
@@ -71,5 +79,8 @@ if __name__ == "__main__":
         "src.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=settings.DEBUG
+        reload=settings.DEBUG,
+        # On Windows, skip uvicorn's loop setup — it forces Selector, which breaks
+        # Playwright's subprocess driver. We set Proactor at module top instead.
+        loop="none" if sys.platform == "win32" else "auto",
     )

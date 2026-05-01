@@ -17,6 +17,8 @@ function App() {
   const [initialSuggestions, setInitialSuggestions] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [gameweek, setGameweek] = useState(0);
+  const [chipStatus, setChipStatus] = useState(null);
+  const [gwIntelligence, setGwIntelligence] = useState(null);
   
   // Watchlist state lifted here so both TeamView and ChatInterface can access it
   const [watchlist, setWatchlist] = useState(() => {
@@ -50,6 +52,8 @@ function App() {
       if (!feedback && result.success) {
         setInitialSuggestions(result.suggestions);
         if (result.gameweek) setGameweek(result.gameweek);
+        if (result.chip_status) setChipStatus(result.chip_status);
+        if (result.gameweek_intelligence) setGwIntelligence(result.gameweek_intelligence);
       }
       return result;
     } catch (error) {
@@ -104,6 +108,11 @@ function App() {
             onGetSuggestions={() => handleGetSuggestions()} 
             watchlist={watchlist}
             setWatchlist={setWatchlist}
+            onTeamLoaded={(data) => {
+              if (data?.chip_status) setChipStatus(data.chip_status);
+              if (data?.gameweek_intelligence) setGwIntelligence(data.gameweek_intelligence);
+              if (data?.gameweek) setGameweek(data.gameweek);
+            }}
           />
         </div>
         <div style={{ display: view === 'chat' ? 'block' : 'none', height: '100%' }}>
@@ -115,6 +124,8 @@ function App() {
             loading={loadingSuggestions}
             onBack={handleBackToTeam}
             watchlist={watchlist}
+            chipStatus={chipStatus}
+            gwIntelligence={gwIntelligence}
           />
         </div>
         <div style={{ display: view === 'leagues' ? 'block' : 'none', height: '100%' }}>

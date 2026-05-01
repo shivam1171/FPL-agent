@@ -2,6 +2,7 @@
  * Transfer approval confirmation modal
  */
 import React, { useState } from 'react';
+import { getPlayerImageUrl, handlePlayerImageError } from '../../utils/playerImage';
 
 const ApprovalModal = ({ suggestion, gameweek, onConfirm, onCancel }) => {
   const [executing, setExecuting] = useState(false);
@@ -20,9 +21,6 @@ const ApprovalModal = ({ suggestion, gameweek, onConfirm, onCancel }) => {
 
   const playerOut = suggestion.player_out;
   const playerIn = suggestion.player_in;
-
-  const getPlayerImage = (code) =>
-    `https://resources.premierleague.com/premierleague/photos/players/250x250/p${code}.png`;
 
   const getTeamBadge = (code) =>
     `https://resources.premierleague.com/premierleague/badges/70/t${code}.png`;
@@ -43,10 +41,10 @@ const ApprovalModal = ({ suggestion, gameweek, onConfirm, onCancel }) => {
           <div className="approval-player out">
             <div className="approval-player-img-wrap">
               <img
-                src={getPlayerImage(playerOut.code)}
+                src={getPlayerImageUrl(playerOut.code)}
                 alt={playerOut.web_name}
                 className="approval-player-img"
-                onError={(e) => { e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'; }}
+                onError={handlePlayerImageError(playerOut)}
               />
               <img src={getTeamBadge(playerOut.team_code)} alt="" className="approval-badge" />
             </div>
@@ -66,10 +64,10 @@ const ApprovalModal = ({ suggestion, gameweek, onConfirm, onCancel }) => {
           <div className="approval-player in">
             <div className="approval-player-img-wrap">
               <img
-                src={getPlayerImage(playerIn.code)}
+                src={getPlayerImageUrl(playerIn.code)}
                 alt={playerIn.web_name}
                 className="approval-player-img"
-                onError={(e) => { e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'; }}
+                onError={handlePlayerImageError(playerIn)}
               />
               <img src={getTeamBadge(playerIn.team_code)} alt="" className="approval-badge" />
             </div>

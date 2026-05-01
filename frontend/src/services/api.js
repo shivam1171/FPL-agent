@@ -1,4 +1,4 @@
-/**
+ /**
  * API client for FPL Agent backend
  */
 import axios from 'axios';
@@ -13,17 +13,28 @@ const api = axios.create({
   },
 });
 
-// Store FPL cookie in memory
+// FPL session held in module memory for the lifetime of the tab.
+// Both pieces are needed: the cookie passes DataDome / Cloudflare checks; the
+// access_token authenticates per-user endpoints like /api/my-team/ via
+// X-Api-Authorization. Without the token, my-team returns 403 and the squad
+// view can't compute free transfers.
 let fplCookie = null;
+let fplAccessToken = null;
 
 export const setFPLCookie = (cookie) => {
   fplCookie = cookie;
 };
 
-// Add cookie to requests
+export const setFPLAccessToken = (token) => {
+  fplAccessToken = token;
+};
+
 api.interceptors.request.use((config) => {
   if (fplCookie) {
     config.headers['X-FPL-Cookie'] = fplCookie;
+  }
+  if (fplAccessToken) {
+    config.headers['X-FPL-Access-Token'] = fplAccessToken;
   }
   return config;
 });
@@ -47,16 +58,16 @@ export const authAPI = {
   },
 
   /**
-   * Login with email and password
+   * Login with email and password. Manager ID is derived from /api/me/ on the backend.
    */
-  loginWithCredentials: async (email, password, managerId) => {
+  loginWithCredentials: async (email, password) => {
     const response = await api.post('/auth/login-credentials', {
       email,
       password,
-      manager_id: parseInt(managerId),
     });
-    if (response.data.success && response.data.cookie) {
-      setFPLCookie(response.data.cookie);
+    if (response.data.success) {
+      if (response.data.cookie) setFPLCookie(response.data.cookie);
+      if (response.data.access_token) setFPLAccessToken(response.data.access_token);
     }
     return response.data;
   },
@@ -115,6 +126,17 @@ export const transferAPI = {
       manager_id: parseInt(managerId),
       gameweek: parseInt(gameweek),
       transfers,
+      chip,
+    });
+    return response.data;
+  },
+
+  /**
+   * Get AI-powered chip advice (Wildcard, Free Hit, Bench Boost, Triple Captain)
+   */
+  getChipAdvice: async (managerId, chip) => {
+    const response = await api.post('/transfers/chip-advice', {
+      manager_id: parseInt(managerId),
       chip,
     });
     return response.data;

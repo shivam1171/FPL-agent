@@ -1,9 +1,10 @@
 /**
- * Enhanced Chat interface — handles both conversational questions and suggestion generation
+ * Enhanced Chat interface — handles conversational questions, suggestion generation, and chip strategy
  */
 import React, { useState, useEffect, useRef } from 'react';
 import SuggestionList from './SuggestionList';
 import ApprovalModal from './ApprovalModal';
+import ChipAdvisor from './ChipAdvisor';
 import { chatAPI, transferAPI } from '../../services/api';
 import ReactMarkdown from 'react-markdown';
 
@@ -18,17 +19,19 @@ const QUICK_PROMPTS = [
 const QUESTION_PROMPTS = [
   { label: "💡 Captain advice", text: "Who should I captain this week and why?" },
   { label: "📅 Fixture difficulty", text: "Which of my players have the hardest upcoming fixtures?" },
-  { label: "🎯 Chip strategy", text: "When should I use my bench boost, wildcard, and free hit chips?" },
+  { label: "🎯 Chip strategy", text: "When should I use my bench boost, wildcard, and free hit chips? Consider any upcoming DGWs or BGWs." },
   { label: "📉 Underperformers", text: "Which of my players are underperforming relative to their price?" },
   { label: "🏆 My rank", text: "What changes would help me improve my overall rank the most?" },
+  { label: "📊 DGW/BGW intel", text: "Are there any upcoming Double or Blank Gameweeks I should be planning for?" },
 ];
 
-const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestions, loading, onBack, watchlist = [] }) => {
+const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestions, loading, onBack, watchlist = [], chipStatus = null, gwIntelligence = null }) => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
   const [promptCategory, setPromptCategory] = useState('questions');
   const [approvalTarget, setApprovalTarget] = useState(null);
+  const [showChipAdvisor, setShowChipAdvisor] = useState(false);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -213,6 +216,13 @@ const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestio
         <button onClick={onBack} className="back-btn">← Back</button>
         <h2>🤖 FPL Assistant</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button 
+            className={`chip-advisor-toggle ${showChipAdvisor ? 'active' : ''}`}
+            onClick={() => setShowChipAdvisor(prev => !prev)}
+            title="Chip Strategy Hub"
+          >
+            🎯 Chips
+          </button>
           {watchlist.length > 0 && (
             <span className="chat-watchlist-badge" title={`Watching: ${watchlist.map(p => p.web_name).join(', ')}`}>
               👁️ {watchlist.length} watched
@@ -221,6 +231,18 @@ const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestio
           <span className="chat-status">Online</span>
         </div>
       </div>
+
+      {/* Chip Advisor Panel */}
+      {showChipAdvisor && (
+        <div className="chip-advisor-container">
+          <ChipAdvisor
+            managerId={managerId}
+            gameweek={gameweek}
+            chipStatus={chipStatus}
+            gwIntelligence={gwIntelligence}
+          />
+        </div>
+      )}
 
       {/* Mode hint */}
       <div className="chat-mode-hint">

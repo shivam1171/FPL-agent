@@ -16,16 +16,16 @@ const LoginForm = ({ onLoginSuccess }) => {
 
   const handleCredentialLogin = async (e) => {
     e.preventDefault();
-    if (!managerId || !email || !password) {
-      setError('Please fill in all fields');
+    if (!email || !password) {
+      setError('Please enter your email and password');
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const result = await authAPI.loginWithCredentials(email, password, managerId);
+      const result = await authAPI.loginWithCredentials(email, password);
       if (result.success) {
-        onLoginSuccess(managerId, result.cookie);
+        onLoginSuccess(result.manager_id, result.cookie);
       }
     } catch (err) {
       const detail = err.response?.data?.detail || 'Login failed. Check your credentials.';
@@ -88,17 +88,19 @@ const LoginForm = ({ onLoginSuccess }) => {
           </button>
         </div>
 
-        {/* Manager ID — shared between both methods */}
-        <div className="input-group">
-          <label>MANAGER ID</label>
-          <input
-            type="text"
-            value={managerId}
-            onChange={(e) => setManagerId(e.target.value)}
-            placeholder="e.g. 123456"
-          />
-          <span className="input-hint">Find this in your FPL URL: fantasy.premierleague.com/entry/<strong>123456</strong>/event/1</span>
-        </div>
+        {/* Manager ID — only needed for cookie-based login. Credential login derives it from /api/me/. */}
+        {loginMethod === 'cookie' && (
+          <div className="input-group">
+            <label>MANAGER ID</label>
+            <input
+              type="text"
+              value={managerId}
+              onChange={(e) => setManagerId(e.target.value)}
+              placeholder="e.g. 123456"
+            />
+            <span className="input-hint">Find this in your FPL URL: fantasy.premierleague.com/entry/<strong>123456</strong>/event/1</span>
+          </div>
+        )}
 
         {/* Credential Login */}
         {loginMethod === 'credentials' && (

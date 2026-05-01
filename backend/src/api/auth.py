@@ -4,8 +4,9 @@ Supports both cookie-based and email/password login.
 """
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+from typing import Optional
 from ..services.fpl_client import FPLClient
-import httpx
+from ..services.playwright_login import FPLLoginError, login_to_fpl
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,10 @@ class LoginRequest(BaseModel):
 
 
 class CredentialLoginRequest(BaseModel):
-    """Login request with email and password."""
+    """Login request with email and password. Manager ID is auto-derived from /api/me/ after login."""
     email: str
     password: str
-    manager_id: int
+    manager_id: Optional[int] = None
 
 
 class LoginResponse(BaseModel):
@@ -32,6 +33,7 @@ class LoginResponse(BaseModel):
     message: str
     manager_id: int
     cookie: str = ""  # Return cookie for credential-based login
+    access_token: str = ""  # OAuth access token from PingOne SSO
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -80,135 +82,69 @@ async def login(request: LoginRequest):
 @router.post("/login-credentials", response_model=LoginResponse)
 async def login_with_credentials(request: CredentialLoginRequest):
     """
-    Login with FPL email and password.
-    Authenticates against the FPL login endpoint and returns session cookies.
+    Log in to FPL with email + password.
+
+    FPL retired the legacy users.premierleague.com Django form and now uses an
+    OAuth/PKCE flow at account.premierleague.com (PingOne-backed). The auth URL
+    contains a per-request state and code_challenge, so we drive a real browser
+    via Playwright instead of replaying it over httpx.
     """
+    logger.info(f"Credential login attempt for {request.email}")
+
     try:
-        logger.info(f"Credential login attempt for manager {request.manager_id}")
-
-        login_url = "https://users.premierleague.com/accounts/login/"
-        
-        # FPL login requires form-encoded POST data
-        login_data = {
-            "login": request.email,
-            "password": request.password,
-            "app": "plfpl-web",
-            "redirect_uri": "https://fantasy.premierleague.com/",
-        }
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "https://users.premierleague.com",
-            "Referer": "https://users.premierleague.com/accounts/login/",
-        }
-
-        async with httpx.AsyncClient(follow_redirects=False) as client:
-            response = await client.post(
-                login_url,
-                data=login_data,
-                headers=headers,
-                timeout=15.0,
-            )
-
-            logger.info(f"FPL login response status: {response.status_code}")
-
-            # FPL returns 302 on success, 200 with error page on failure
-            if response.status_code not in (302, 200):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"FPL login failed with status {response.status_code}"
-                )
-
-            # Extract cookies from response
-            cookies = response.cookies
-            cookie_jar = response.headers.get_list("set-cookie")
-
-            if not cookie_jar and response.status_code == 200:
-                # 200 usually means invalid credentials (stays on login page)
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid email or password. Please check your credentials."
-                )
-
-            # Build cookie string from set-cookie headers
-            cookie_parts = []
-            for cookie_header in cookie_jar:
-                # Extract just the key=value part before any attributes
-                cookie_kv = cookie_header.split(";")[0].strip()
-                if cookie_kv:
-                    cookie_parts.append(cookie_kv)
-
-            # Also include any cookies from the response
-            for name, value in cookies.items():
-                cookie_parts.append(f"{name}={value}")
-
-            cookie_string = "; ".join(cookie_parts)
-
-            if not cookie_string:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="FPL's Cloudflare security blocked the email login. Please use the Cookie method instead (it bypasses this check)."
-                )
-
-            logger.info(f"Got cookies with {len(cookie_parts)} parts")
-
-        # Validate the cookie works
-        fpl_client = FPLClient(cookie=cookie_string)
-        is_valid = await fpl_client.validate_cookie()
-
-        if not is_valid:
-            # Try again with a follow-redirect approach to capture more cookies
-            logger.warning("Initial cookie validation failed, trying with redirect follow")
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                response = await client.post(
-                    login_url,
-                    data=login_data,
-                    headers=headers,
-                    timeout=15.0,
-                )
-                # Collect all cookies from the full redirect chain
-                all_cookies = dict(response.cookies)
-                cookie_string = "; ".join(f"{k}={v}" for k, v in all_cookies.items())
-                
-                fpl_client = FPLClient(cookie=cookie_string)
-                is_valid = await fpl_client.validate_cookie()
-                
-                if not is_valid:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Login appeared to succeed but session is invalid. Try the cookie method instead."
-                    )
-
-        # Verify manager ID access
-        try:
-            await fpl_client.get_team_summary(request.manager_id)
-        except Exception as e:
-            logger.error(f"Failed to fetch team after credential login: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Logged in but could not access your team. Check your manager ID."
-            )
-
-        logger.info(f"Credential login successful for manager {request.manager_id}")
-
-        return LoginResponse(
-            success=True,
-            message="Login successful! Connected to FPL.",
-            manager_id=request.manager_id,
-            cookie=cookie_string,
+        session = await login_to_fpl(request.email, request.password)
+    except FPLLoginError as e:
+        status_code = (
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+            if e.code == "playwright_not_installed"
+            else status.HTTP_401_UNAUTHORIZED
         )
-
-    except HTTPException:
-        raise
+        logger.error("Login failed (%s): %s", e.code, e)
+        raise HTTPException(status_code=status_code, detail=str(e))
     except Exception as e:
-        logger.error(f"Credential login failed: {e}", exc_info=True)
+        logger.exception("Unexpected error during credential login")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login failed: {str(e)}"
+            detail=f"Login failed: {e}",
         )
+
+    cookie_string = session["cookie"]
+    access_token = session["access_token"]
+
+    fpl_client = FPLClient(cookie=cookie_string, access_token=access_token)
+    if not await fpl_client.validate_cookie():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Login succeeded but the session cookie was rejected by FPL.",
+        )
+
+    # Derive manager_id from the authenticated session unless caller supplied one.
+    manager_id = request.manager_id
+    if manager_id is None:
+        manager_id = await fpl_client.get_authenticated_manager_id()
+        if manager_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Logged in, but FPL did not return a manager id for this account.",
+            )
+
+    try:
+        await fpl_client.get_team_summary(manager_id)
+    except Exception as e:
+        logger.error("Failed to fetch team after credential login: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Logged in, but could not access that manager's team data.",
+        )
+
+    logger.info(f"Credential login successful for manager {manager_id}")
+    return LoginResponse(
+        success=True,
+        message="Login successful! Connected to FPL.",
+        manager_id=manager_id,
+        cookie=cookie_string,
+        access_token=access_token,
+    )
 
 
 @router.get("/validate")

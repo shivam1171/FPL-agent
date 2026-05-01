@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { teamAPI } from '../../services/api';
+import { getPlayerImageUrl, handlePlayerImageError } from '../../utils/playerImage';
 
 const OtherTeamView = ({ managerId, managerName, onBack }) => {
   const [team, setTeam] = useState(null);
@@ -50,11 +51,11 @@ const OtherTeamView = ({ managerId, managerName, onBack }) => {
       <div key={player.id} className={`player-card ${isBench ? 'bench' : ''} ${isPitchMode ? 'pitch-mode' : ''}`}>
         <div className={`status-dot ${getStatusClass(player.status)}`}></div>
         <div className="player-visual-top">
-          <img 
-            src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${player.code}.png`}
+          <img
+            src={getPlayerImageUrl(player.code)}
             alt={player.web_name}
             className={`player-face-sm ${isBench ? 'bench-face' : ''}`}
-            onError={(e) => e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'}
+            onError={handlePlayerImageError(player)}
           />
           <img 
             src={`https://resources.premierleague.com/premierleague/badges/70/t${player.team_code}.png`}

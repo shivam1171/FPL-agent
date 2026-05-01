@@ -4,36 +4,37 @@
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import { teamAPI } from '../../services/api';
+import { getPlayerImageUrl, handlePlayerImageError } from '../../utils/playerImage';
 
-// Deadline countdown hook
-const useDeadlineTimer = (gameweek) => {
+// Countdown to a specific ISO deadline (e.g. "2026-05-01T17:30:00Z" from FPL).
+const useDeadlineTimer = (deadlineIso) => {
   const [timeLeft, setTimeLeft] = useState(null);
   useEffect(() => {
-    const getNextDeadline = () => {
-      const now = new Date();
-      const d = new Date(now);
-      const daysUntilSat = (6 - d.getDay() + 7) % 7 || 7;
-      d.setDate(d.getDate() + daysUntilSat);
-      d.setHours(11, 0, 0, 0);
-      if (d <= now) d.setDate(d.getDate() + 7);
-      return d;
-    };
-    const deadline = getNextDeadline();
+    if (!deadlineIso) { setTimeLeft(null); return; }
+    const deadline = new Date(deadlineIso);
+    if (Number.isNaN(deadline.getTime())) { setTimeLeft(null); return; }
     const tick = () => {
       const diff = deadline - new Date();
-      if (diff > 0) {
-        const d = Math.floor(diff / 86400000);
-        const h = Math.floor((diff % 86400000) / 3600000);
-        const m = Math.floor((diff % 3600000) / 60000);
-        const s = Math.floor((diff % 60000) / 1000);
-        setTimeLeft({ d, h, m, s });
-      }
+      if (diff <= 0) { setTimeLeft({ d: 0, h: 0, m: 0, s: 0, expired: true }); return; }
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setTimeLeft({ d, h, m, s, expired: false });
     };
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [gameweek]);
+  }, [deadlineIso]);
   return timeLeft;
+};
+
+// Pick the next GW whose deadline hasn't passed yet from the gw_intelligence payload.
+const findNextDeadlineGw = (gwIntel) => {
+  const details = gwIntel?.gameweek_details;
+  if (!Array.isArray(details)) return null;
+  const now = Date.now();
+  return details.find(d => d?.deadline_time && new Date(d.deadline_time).getTime() > now) || null;
 };
 
 // Price movement prediction based on transfer activity
@@ -65,7 +66,7 @@ const MiniSparkline = ({ values, width = 60, height = 20 }) => {
   );
 };
 
-const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
+const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist, onTeamLoaded }) => {
   const [team, setTeam] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -88,6 +89,7 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
         const sorted = [...allPlayers].sort((a, b) => parseFloat(b.form || 0) - parseFloat(a.form || 0));
         setTopPerformers(sorted.slice(0, 5));
       }
+      if (onTeamLoaded) onTeamLoaded(data);
     } catch (err) {
       setError('Failed to load team data');
     } finally {
@@ -111,7 +113,8 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
     else { setCompareA(player); setCompareB(null); }
   };
 
-  const timeLeft = useDeadlineTimer(team?.gameweek);
+  const nextDeadlineGw = findNextDeadlineGw(team?.gameweek_intelligence);
+  const timeLeft = useDeadlineTimer(nextDeadlineGw?.deadline_time);
 
   if (loading) return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: '16px' }}>
@@ -153,11 +156,11 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
       >
         <div className={`status-dot ${getStatusClass(player.status)}`}></div>
         <div className="player-visual-top">
-          <img 
-            src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${player.code}.png`}
+          <img
+            src={getPlayerImageUrl(player.code)}
             alt={player.web_name}
             className={`player-face-sm ${isBench ? 'bench-face' : ''}`}
-            onError={(e) => e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'}
+            onError={handlePlayerImageError(player)}
           />
           <img 
             src={`https://resources.premierleague.com/premierleague/badges/70/t${player.team_code}.png`}
@@ -213,15 +216,21 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
 
   return (
     <div className="team-view">
-      {/* Deadline Timer */}
-      {timeLeft && (
+      {/* Deadline Timer — uses the actual FPL deadline for the next GW */}
+      {timeLeft && nextDeadlineGw && (
         <div className="deadline-banner">
-          <span className="deadline-label">⏰ GW{gameweek + 1} Deadline</span>
+          <span className="deadline-label">⏰ GW{nextDeadlineGw.gameweek} Deadline</span>
           <div>
-            <span className="deadline-time">{timeLeft.d}</span><span className="deadline-unit">d </span>
-            <span className="deadline-time">{String(timeLeft.h).padStart(2, '0')}</span><span className="deadline-unit">h </span>
-            <span className="deadline-time">{String(timeLeft.m).padStart(2, '0')}</span><span className="deadline-unit">m </span>
-            <span className="deadline-time">{String(timeLeft.s).padStart(2, '0')}</span><span className="deadline-unit">s</span>
+            {timeLeft.expired ? (
+              <span className="deadline-time">Locked</span>
+            ) : (
+              <>
+                <span className="deadline-time">{timeLeft.d}</span><span className="deadline-unit">d </span>
+                <span className="deadline-time">{String(timeLeft.h).padStart(2, '0')}</span><span className="deadline-unit">h </span>
+                <span className="deadline-time">{String(timeLeft.m).padStart(2, '0')}</span><span className="deadline-unit">m </span>
+                <span className="deadline-time">{String(timeLeft.s).padStart(2, '0')}</span><span className="deadline-unit">s</span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -344,11 +353,11 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
             </div>
             <div className="comparison-body">
               <div className="compare-col">
-                <img 
-                  src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${compareA.code}.png`}
+                <img
+                  src={getPlayerImageUrl(compareA.code)}
                   alt={compareA.web_name}
                   className="compare-img"
-                  onError={(e) => e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'}
+                  onError={handlePlayerImageError(compareA)}
                 />
                 <strong>{compareA.web_name}</strong>
                 <span className="compare-team">{compareA.team_name} • {compareA.position}</span>
@@ -377,11 +386,11 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
                 })}
               </div>
               <div className="compare-col">
-                <img 
-                  src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${compareB.code}.png`}
+                <img
+                  src={getPlayerImageUrl(compareB.code)}
                   alt={compareB.web_name}
                   className="compare-img"
-                  onError={(e) => e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'}
+                  onError={handlePlayerImageError(compareB)}
                 />
                 <strong>{compareB.web_name}</strong>
                 <span className="compare-team">{compareB.team_name} • {compareB.position}</span>
@@ -405,11 +414,11 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
               return (
                 <div key={player.id} className="watchlist-card">
                   <div className="wc-left">
-                    <img 
-                      src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${player.code}.png`}
+                    <img
+                      src={getPlayerImageUrl(player.code)}
                       alt={player.web_name}
                       className="wc-img"
-                      onError={(e) => e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'}
+                      onError={handlePlayerImageError(player)}
                     />
                     <div className="wc-info">
                       <span className="wc-name">{player.web_name}</span>
@@ -535,10 +544,10 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
                 <tr key={player.id}>
                   <td>
                     <div className="player-cell">
-                      <img 
-                        src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${player.code}.png`}
+                      <img
+                        src={getPlayerImageUrl(player.code)}
                         alt={player.web_name}
-                        onError={(e) => e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'}
+                        onError={handlePlayerImageError(player)}
                       />
                       <div className="player-info-mini">
                         <span className="pi-name">{player.web_name}{pick.is_captain ? ' (C)' : pick.is_vice_captain ? ' (VC)' : ''}</span>
@@ -572,10 +581,10 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist }) => {
                   <tr key={player.id}>
                     <td>
                       <div className="player-cell">
-                        <img 
-                          src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${player.code}.png`}
+                        <img
+                          src={getPlayerImageUrl(player.code)}
                           alt={player.web_name}
-                          onError={(e) => e.target.src = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p0.png'}
+                          onError={handlePlayerImageError(player)}
                         />
                         <div className="player-info-mini">
                           <span className="pi-name">{player.web_name}</span>

@@ -13,7 +13,8 @@ router = APIRouter()
 @router.get("/manager/{manager_id}")
 async def get_manager_leagues(
     manager_id: int,
-    fpl_cookie: Optional[str] = Header(None, alias="X-FPL-Cookie")
+    fpl_cookie: Optional[str] = Header(None, alias="X-FPL-Cookie"),
+    fpl_access_token: Optional[str] = Header(None, alias="X-FPL-Access-Token"),
 ):
     """
     Get leagues a manager is in.
@@ -22,7 +23,7 @@ async def get_manager_leagues(
         manager_id: FPL manager ID
     """
     try:
-        client = FPLClient(cookie=fpl_cookie)
+        client = FPLClient(cookie=fpl_cookie, access_token=fpl_access_token)
         leagues = await client.get_manager_leagues(manager_id)
         return leagues
     except Exception as e:
@@ -36,7 +37,8 @@ async def get_manager_leagues(
 async def get_league_standings(
     league_id: int,
     page: int = Query(1, description="Page number for standings"),
-    fpl_cookie: Optional[str] = Header(None, alias="X-FPL-Cookie")
+    fpl_cookie: Optional[str] = Header(None, alias="X-FPL-Cookie"),
+    fpl_access_token: Optional[str] = Header(None, alias="X-FPL-Access-Token"),
 ):
     """
     Get standings for a specific classic league.
@@ -46,7 +48,7 @@ async def get_league_standings(
         page: Page number
     """
     try:
-        client = FPLClient(cookie=fpl_cookie)
+        client = FPLClient(cookie=fpl_cookie, access_token=fpl_access_token)
         standings = await client.get_league_standings(league_id, page_standings=page)
         return standings
     except Exception as e:

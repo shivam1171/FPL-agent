@@ -34,7 +34,8 @@ class ChatResponse(BaseModel):
 @router.post("/message", response_model=ChatResponse)
 async def chat_message(
     request: ChatRequest,
-    fpl_cookie: Optional[str] = Header(None, alias="X-FPL-Cookie")
+    fpl_cookie: Optional[str] = Header(None, alias="X-FPL-Cookie"),
+    fpl_access_token: Optional[str] = Header(None, alias="X-FPL-Access-Token"),
 ):
     """
     Process a chat message and return an AI-generated response.
@@ -51,13 +52,18 @@ async def chat_message(
         logger.info(f"Chat message from manager {request.manager_id}: {request.message[:80]}...")
 
         # Fetch team data for context
-        client = FPLClient(cookie=fpl_cookie)
+        client = FPLClient(cookie=fpl_cookie, access_token=fpl_access_token)
         team_context = ""
         
         try:
             current_gw = await client.get_current_gameweek()
             team_summary = await client.get_team_summary(request.manager_id)
-            team_picks = await client.get_team_picks(request.manager_id, current_gw)
+            try:
+                my_team = await client.get_my_team(request.manager_id)
+                team_picks = my_team.picks
+            except Exception as e:
+                logger.warning(f"Falling back to historical picks for chat: {e}")
+                team_picks = await client.get_team_picks(request.manager_id, current_gw)
             all_players = await client.get_all_players()
             players_map = {p.id: p for p in all_players}
 
@@ -84,6 +90,39 @@ async def chat_message(
                         "xA": player.expected_assists,
                     })
 
+            # Fetch chip and GW intelligence
+            chip_context = ""
+            gw_intel_context = ""
+            try:
+                chip_status = await client.get_chip_status(request.manager_id)
+                chip_names = {"wildcard": "Wildcard", "freehit": "Free Hit", "bboost": "Bench Boost", "3xc": "Triple Captain"}
+                chip_lines = []
+                for chip in chip_status.chips:
+                    display = chip_names.get(chip.name, chip.name)
+                    avail = "✅ Available" if chip.is_available else "❌ Used"
+                    chip_lines.append(f"  {display}: {avail}")
+                if chip_lines:
+                    chip_context = "\nChip Status:\n" + "\n".join(chip_lines)
+            except Exception:
+                pass
+
+            try:
+                gw_intel = await client.get_gameweek_intelligence()
+                gw_lines = []
+                for gw in gw_intel.gameweek_details:
+                    markers = []
+                    if gw.is_double:
+                        markers.append(f"DGW — doubles: {', '.join(gw.teams_with_double)}")
+                    if gw.is_blank:
+                        markers.append(f"BGW — blanks: {', '.join(gw.teams_with_blank)}")
+                    if markers:
+                        tag = " (CURRENT)" if gw.is_current else ""
+                        gw_lines.append(f"  GW{gw.gameweek}{tag}: {'; '.join(markers)}")
+                if gw_lines:
+                    gw_intel_context = "\nGameweek Intelligence:\n" + "\n".join(gw_lines)
+            except Exception:
+                pass
+
             team_context = f"""
 Current Gameweek: {current_gw}
 Team Summary:
@@ -95,6 +134,8 @@ Team Summary:
 
 Squad:
 {json.dumps(team_players, indent=1, default=str)}
+{chip_context}
+{gw_intel_context}
 """
         except Exception as e:
             logger.warning(f"Could not fetch full team context: {e}")
@@ -128,6 +169,12 @@ IMPORTANT RULES:
 4. Reference specific players from their squad when relevant.
 5. When discussing strategy, consider GW deadlines, chip strategy, differential picks, and fixture difficulty.
 6. Keep responses concise but comprehensive — aim for 2-4 paragraphs.
+7. CHIP STRATEGY EXPERTISE: You have full knowledge of all FPL chips:
+   - **Wildcard**: Unlimited free transfers for one GW. Best used during fixture swings or to restructure the squad.
+   - **Free Hit**: Temporary unlimited transfers for one GW only (squad reverts next GW). Ideal for BGWs or DGWs.
+   - **Bench Boost**: All 15 players score points. Best in DGWs when bench players also have double fixtures.
+   - **Triple Captain**: Captain scores 3x instead of 2x. Best on premium players in DGWs.
+8. DGW/BGW AWARENESS: Use the gameweek intelligence data to inform your advice about upcoming double and blank gameweeks.
 
 {team_context}
 {suggestions_context}
