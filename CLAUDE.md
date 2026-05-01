@@ -40,6 +40,21 @@ npm run build     # production build
 - Frontend: copy `frontend/.env.example` → `frontend/.env` (sets `VITE_API_BASE_URL`)
 - FPL authentication uses a browser session cookie passed from the frontend — it is never persisted to disk
 
+## Deployment (Render)
+
+Backend deploys to Render. Two non-obvious gotchas:
+
+1. **Playwright browser binaries.** `pip install playwright` only installs the Python package; the Chromium binary must be downloaded separately. Render's Python runtime runs builds as a non-root user with no sudo, so `playwright install --with-deps chromium` fails (it tries `apt-get`). Use `playwright install chromium` (no `--with-deps`) — Render's base image already has the system libs Chromium needs.
+2. **Browser binary persistence.** The default install path `~/.cache/ms-playwright/` is not guaranteed to survive build → runtime on Render. Install browsers into the project directory by setting `PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/src/.playwright` as a Render env var **and** in the build command. Build command:
+   ```
+   PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/src/.playwright pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/src/.playwright playwright install chromium
+   ```
+   The env var must be set at both build time (writes to that path) and runtime (Playwright reads from it).
+
+### Dependency pinning
+
+`backend/requirements.txt` uses exact pins for every package. Note: `greenlet` must stay at `3.1.1` because `playwright==1.49.0` hard-pins it (`greenlet==3.1.1`). Bumping greenlet causes `pip install` to fail with `ResolutionImpossible`.
+
 ## Architecture
 
 ### Backend (FastAPI + LangGraph)
@@ -103,6 +118,14 @@ The Vite dev server proxies `/api` → `http://localhost:8000`, so no CORS issue
 - `my-team/{manager_id}/` requires a valid cookie; other endpoints are public. The `chips` array in the response contains chip availability with `status_id`, `played_by_entry`, and timing fields
 - DGW/BGW detection is done by fetching all `/fixtures/` and counting matches per team per GW — teams with 2+ fixtures in a GW have a double, teams with 0 have a blank
 - The transfer execution endpoint is undocumented and may change — see README for how to re-derive it from browser DevTools
+
+### Playwright login flow (`services/playwright_login.py`)
+
+FPL uses a PingOne OAuth/PKCE flow at `account.premierleague.com` with a per-request `state` and `code_challenge`, so the redirect URL cannot be constructed — a real browser must drive the flow. Quirks worth knowing before editing:
+
+- **Multiple "Log in" elements exist on the FPL homepage.** The user-menu toggle button and the main CTA both have the text "Log in", and the main CTA is sometimes an `<a>` link rather than a `<button>`. The implementation matches both (`a:visible:has-text("Log in"), button:visible:has-text("Log in")`) and tries each candidate in turn, accepting the one that actually navigates to `account.premierleague.com`. Don't replace this with a single `.first` selector — the menu toggle is often first and clicking it is a no-op for the OAuth flow.
+- **Hydration race.** `wait_until="domcontentloaded"` returns before React hydrates and attaches click handlers, making clicks no-op. Use `wait_until="load"` plus a small `wait_for_timeout` buffer. `networkidle` is unreliable on FPL (constant analytics traffic).
+- **Diagnostic capture on failure.** When no candidate navigates, the code logs `page.url`, `title`, and `body[:500]`, plus a screenshot to `/tmp/fpl_login_failure.png`. Check Render logs for these on login failures — they distinguish a Cloudflare/captcha challenge from a layout change.
 
 ## graphify
 
