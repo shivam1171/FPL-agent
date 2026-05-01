@@ -161,6 +161,18 @@ def _login_to_fpl_sync(
                 ):
                     login_btn.click()
             except PWTimeoutError:
+                # Capture what page we're actually stuck on so we can diagnose.
+                try:
+                    current_url = page.url
+                    title = page.title()
+                    body_text = page.locator("body").inner_text()[:500]
+                    logger.error(
+                        "Login click did not navigate. url=%s title=%r body[:500]=%r",
+                        current_url, title, body_text,
+                    )
+                    page.screenshot(path="/tmp/fpl_login_failure.png", full_page=True)
+                except Exception as diag_err:
+                    logger.error("Diagnostic capture failed: %s", diag_err)
                 raise FPLLoginError(
                     "Did not redirect to account.premierleague.com after clicking "
                     "Log in.",
