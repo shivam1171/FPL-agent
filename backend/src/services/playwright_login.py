@@ -138,36 +138,58 @@ def _login_to_fpl_sync(
 
         try:
             logger.info("Playwright: opening FPL homepage")
-            page.goto(FPL_HOME_URL, wait_until="domcontentloaded")
+            page.goto(FPL_HOME_URL, wait_until="load")
 
             _dismiss_cookie_banner(page)
 
-            # The DOM has two "Log in" buttons — one in the user menu (hidden
-            # until expanded) and one visible CTA. Click the visible one.
-            login_btn = page.locator('button:visible:has-text("Log in")').first
+            # Give React a moment to hydrate event handlers — networkidle never
+            # fires on FPL (constant analytics traffic), so just sleep briefly.
+            page.wait_for_timeout(1500)
+
+            # The login CTA is usually an <a> link, not a <button>. Match either.
+            # We may match multiple ("Log in" appears in the user menu too); try
+            # each in order until one actually navigates to account.premierleague.com.
+            candidates = page.locator(
+                'a:visible:has-text("Log in"), button:visible:has-text("Log in")'
+            )
             try:
-                login_btn.wait_for(state="visible", timeout=timeout_ms)
+                candidates.first.wait_for(state="visible", timeout=timeout_ms)
             except PWTimeoutError:
                 raise FPLLoginError(
-                    "FPL homepage did not show a Log in button. The site layout "
+                    "FPL homepage did not show a Log in element. The site layout "
                     "may have changed.",
                     code="login_failed",
                 )
 
-            logger.info("Playwright: clicking Log in to start OAuth flow")
-            try:
-                with page.expect_navigation(
-                    url=lambda u: ACCOUNT_HOST in u, timeout=timeout_ms,
-                ):
-                    login_btn.click()
-            except PWTimeoutError:
-                # Capture what page we're actually stuck on so we can diagnose.
+            count = candidates.count()
+            logger.info("Playwright: found %d 'Log in' candidates", count)
+
+            navigated = False
+            per_attempt_timeout = max(5000, timeout_ms // max(count, 1))
+            for i in range(count):
+                try:
+                    logger.info("Playwright: clicking 'Log in' candidate %d/%d", i + 1, count)
+                    with page.expect_navigation(
+                        url=lambda u: ACCOUNT_HOST in u,
+                        timeout=per_attempt_timeout,
+                    ):
+                        candidates.nth(i).click()
+                    navigated = True
+                    break
+                except PWTimeoutError:
+                    logger.info(
+                        "Candidate %d did not navigate (still at %s); trying next",
+                        i + 1, page.url,
+                    )
+                    continue
+
+            if not navigated:
                 try:
                     current_url = page.url
                     title = page.title()
                     body_text = page.locator("body").inner_text()[:500]
                     logger.error(
-                        "Login click did not navigate. url=%s title=%r body[:500]=%r",
+                        "No 'Log in' candidate navigated. url=%s title=%r body[:500]=%r",
                         current_url, title, body_text,
                     )
                     page.screenshot(path="/tmp/fpl_login_failure.png", full_page=True)
