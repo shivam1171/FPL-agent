@@ -25,9 +25,22 @@ async def analyzer_node(state: AgentState) -> Dict[str, Any]:
         Updated state with analysis results
     """
     try:
-        current_team_players = state["current_team_players"]
-        all_players = state["all_players"]
-        fixtures = state["fixtures"]
+        current_team_players = state.get("current_team_players")
+        all_players = state.get("all_players")
+        fixtures = state.get("fixtures") or []
+
+        # These are None when the fetch step failed. Say so explicitly rather
+        # than letting it surface as "'NoneType' object is not iterable".
+        missing = [
+            name for name, value in (
+                ("current_team_players", current_team_players),
+                ("all_players", all_players),
+            ) if not value
+        ]
+        if missing:
+            message = f"Analysis skipped: missing data from fetch step ({', '.join(missing)})"
+            logger.error(message)
+            return {"error": message, "step_completed": "analysis_failed"}
 
         # Analyze each player in current team
         player_analyses = []

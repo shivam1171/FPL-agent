@@ -12,12 +12,34 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _halt_on_error(next_node: str):
+    """Build a router that stops the workflow as soon as a node reports an error.
+
+    Without this, a failed fetch leaves `all_players`/`fixtures` as None, the
+    downstream nodes raise "'NoneType' object is not iterable", and each one
+    overwrites `error` — so the caller sees the last generic failure instead of
+    the real root cause.
+    """
+    def route(state: AgentState) -> str:
+        if state.get("error"):
+            logger.warning(
+                f"Halting workflow after '{state.get('step_completed')}': {state['error']}"
+            )
+            return END
+        return next_node
+
+    return route
+
+
 def create_suggestion_graph():
     """
     Create the LangGraph workflow for generating transfer suggestions.
 
     Workflow:
         START → DataFetcher → Analyzer → Suggester → END
+
+    Any node that sets `error` routes straight to END, preserving the first
+    (and therefore most informative) error message.
 
     Returns:
         Compiled graph
@@ -30,10 +52,14 @@ def create_suggestion_graph():
     workflow.add_node("analyze", analyzer_node)
     workflow.add_node("suggest", suggester_node)
 
-    # Define edges
+    # Define edges — bail out early if a node has already failed
     workflow.set_entry_point("fetch_data")
-    workflow.add_edge("fetch_data", "analyze")
-    workflow.add_edge("analyze", "suggest")
+    workflow.add_conditional_edges(
+        "fetch_data", _halt_on_error("analyze"), {"analyze": "analyze", END: END}
+    )
+    workflow.add_conditional_edges(
+        "analyze", _halt_on_error("suggest"), {"suggest": "suggest", END: END}
+    )
     workflow.add_edge("suggest", END)
 
     # Compile graph

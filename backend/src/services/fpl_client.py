@@ -4,6 +4,7 @@ FPL API client for fetching data and executing transfers.
 import httpx
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
+from pydantic import ValidationError
 from ..config import settings
 from ..models.player import Player, UserTeam, TeamSummary, TeamPick
 from ..models.fixture import Fixture, Team
@@ -167,8 +168,20 @@ class FPLClient:
         """
         data = await self.get_bootstrap_static()
         teams = []
-        for team_data in data["teams"]:
-            teams.append(Team(**team_data))
+        for team_data in data.get("teams") or []:
+            try:
+                teams.append(Team(**team_data))
+            except ValidationError as e:
+                # Skip the offending team rather than failing the whole fetch —
+                # a single unparseable entry shouldn't take down the workflow.
+                logger.warning(
+                    f"Skipping unparseable team entry id={team_data.get('id')} "
+                    f"name={team_data.get('name')}: {e}"
+                )
+
+        if not teams:
+            raise ValueError("FPL bootstrap-static returned no parseable teams")
+
         return teams
 
     async def get_current_gameweek(self) -> int:
