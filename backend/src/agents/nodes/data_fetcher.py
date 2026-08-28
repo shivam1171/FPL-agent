@@ -50,8 +50,21 @@ async def data_fetcher_node(state: AgentState) -> Dict[str, Any]:
             my_team = await client.get_my_team(manager_id)
             team_picks = my_team.picks
         except Exception as e:
-            logger.warning(f"Could not fetch live my-team, falling back to historical picks: {e}")
-            team_picks = await client.get_team_picks(manager_id, current_gameweek)
+            # A 403 here means the SSO access token is missing or expired —
+            # worth calling out, since re-login fixes it and nothing else will.
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status in (401, 403):
+                logger.warning(
+                    "my-team returned %s — the FPL access token looks expired or "
+                    "missing; falling back to historical picks. Re-run the login "
+                    "flow to restore live squad data.", status
+                )
+            else:
+                logger.warning(f"Could not fetch live my-team, falling back to historical picks: {e}")
+
+            # Note: NOT current_gameweek. That's the GW we're planning transfers
+            # for, and its picks endpoint 404s until the deadline passes.
+            team_picks = await client.get_latest_team_picks(manager_id)
 
         # Fetch chip status and gameweek intelligence
         chip_status = None

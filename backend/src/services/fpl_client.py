@@ -346,6 +346,79 @@ class FPLClient:
             data = response.json()
             return [TeamPick(**pick) for pick in data["picks"]]
 
+    async def get_last_available_picks_gameweek(self) -> Optional[int]:
+        """Get the newest gameweek that actually has picks on the API.
+
+        This is NOT the same as `get_current_gameweek()`. That one returns the
+        gameweek you're planning transfers *for*, which is typically one ahead
+        of anything the API will serve picks for — `/entry/{id}/event/{gw}/picks/`
+        404s until that gameweek's deadline has passed.
+
+        FPL's `is_current` flag stays on a gameweek until the next deadline, so
+        it's exactly the newest gameweek with picks.
+
+        Returns:
+            Gameweek number, or None before the season's first deadline
+        """
+        data = await self.get_bootstrap_static()
+        events = data.get("events") or []
+
+        for event in events:
+            if event.get("is_current"):
+                return event["id"]
+
+        # No current GW flagged — fall back to the highest finished one
+        finished = [
+            e["id"] for e in events
+            if e.get("finished") or e.get("data_checked")
+        ]
+        if finished:
+            return max(finished)
+
+        # Pre-season: nobody has picks yet
+        return None
+
+    async def get_latest_team_picks(
+        self, manager_id: int, max_lookback: int = 5
+    ) -> List[TeamPick]:
+        """Fetch the most recent available picks, walking back if needed.
+
+        Handles the gap where a gameweek is current but the manager has no
+        picks for it (joined late, or the entry didn't exist yet).
+
+        Args:
+            manager_id: FPL manager ID
+            max_lookback: How many gameweeks back to try before giving up
+
+        Returns:
+            List of TeamPick objects
+        """
+        start_gw = await self.get_last_available_picks_gameweek()
+
+        if start_gw is None:
+            raise ValueError(
+                "No gameweek has started yet, so no picks are available. "
+                "Live squad data requires a valid access token."
+            )
+
+        last_error: Optional[Exception] = None
+        for gw in range(start_gw, max(start_gw - max_lookback, 0), -1):
+            try:
+                picks = await self.get_team_picks(manager_id, gw)
+                if picks:
+                    logger.info(f"Loaded picks for manager {manager_id} from GW{gw}")
+                    return picks
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code != 404:
+                    raise
+                last_error = e
+                logger.debug(f"No picks for manager {manager_id} in GW{gw}, trying earlier")
+
+        raise ValueError(
+            f"No picks found for manager {manager_id} in GW{start_gw} or the "
+            f"{max_lookback} gameweeks before it."
+        ) from last_error
+
     async def get_fixtures(self, gameweek: Optional[int] = None) -> List[Fixture]:
         """
         Fetch fixtures, optionally filtered by gameweek.
