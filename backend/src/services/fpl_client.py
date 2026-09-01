@@ -15,6 +15,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class FPLAuthError(Exception):
+    """Session lacks the credentials needed to authorize a write to FPL."""
+
+
 class FPLClient:
     """Client for interacting with the Fantasy Premier League API."""
 
@@ -31,6 +35,10 @@ class FPLClient:
                 standard ``Authorization``).
         """
         self.base_url = settings.FPL_BASE_URL
+        # Per-instance memo cache. FPLClient is built per request, so this is
+        # request-scoped: several methods derive from bootstrap-static and would
+        # otherwise refetch it (and its ~600 players) many times per request.
+        self._cache: Dict[str, Any] = {}
         self.cookie = cookie
         self.access_token = access_token
         self.csrf_token = None
@@ -107,6 +115,9 @@ class FPLClient:
         Returns:
             Dictionary with players, teams, events, and element_types
         """
+        if "bootstrap" in self._cache:
+            return self._cache["bootstrap"]
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}bootstrap-static/",
@@ -114,7 +125,10 @@ class FPLClient:
                 timeout=30.0
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+
+        self._cache["bootstrap"] = data
+        return data
 
     async def get_all_players(self) -> List[Player]:
         """
@@ -123,6 +137,9 @@ class FPLClient:
         Returns:
             List of Player objects
         """
+        if "players" in self._cache:
+            return self._cache["players"]
+
         data = await self.get_bootstrap_static()
         teams_map = {team["id"]: {"name": team["name"], "code": team["code"]} for team in data["teams"]}
 
@@ -157,6 +174,7 @@ class FPLClient:
             }
             players.append(Player(**player_data))
 
+        self._cache["players"] = players
         return players
 
     async def get_teams(self) -> List[Team]:
@@ -166,6 +184,9 @@ class FPLClient:
         Returns:
             List of Team objects
         """
+        if "teams" in self._cache:
+            return self._cache["teams"]
+
         data = await self.get_bootstrap_static()
         teams = []
         for team_data in data.get("teams") or []:
@@ -182,6 +203,7 @@ class FPLClient:
         if not teams:
             raise ValueError("FPL bootstrap-static returned no parseable teams")
 
+        self._cache["teams"] = teams
         return teams
 
     async def get_current_gameweek(self) -> int:
@@ -225,15 +247,32 @@ class FPLClient:
         if not self.cookie:
             raise ValueError("Authentication required for this endpoint")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}my-team/{manager_id}/",
-                headers=self.headers,
-                timeout=10.0
-            )
-            response.raise_for_status()
-            data = response.json()
-            return UserTeam(**data)
+        cache_key = "my_team:%s" % manager_id
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            # Failures are cached too: several callers hit my-team per request and
+            # an expired token fails identically for all of them. Re-raise the
+            # original so callers can still inspect e.response.status_code.
+            if isinstance(cached, Exception):
+                raise cached
+            return cached
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}my-team/{manager_id}/",
+                    headers=self.headers,
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            self._cache[cache_key] = e
+            raise
+
+        team = UserTeam(**data)
+        self._cache[cache_key] = team
+        return team
 
     async def get_team_summary(self, manager_id: int) -> TeamSummary:
         """
@@ -429,6 +468,10 @@ class FPLClient:
         Returns:
             List of Fixture objects
         """
+        cache_key = "fixtures:%s" % gameweek
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         url = f"{self.base_url}fixtures/"
         if gameweek:
             url += f"?event={gameweek}"
@@ -452,6 +495,7 @@ class FPLClient:
             fixture_data["team_a_name"] = teams_map.get(fixture_data["team_a"])
             fixtures.append(Fixture(**fixture_data))
 
+        self._cache[cache_key] = fixtures
         return fixtures
 
     async def get_player_summary(self, player_id: int) -> Dict[str, Any]:
@@ -631,17 +675,34 @@ class FPLClient:
         Returns:
             JSON response from FPL
         """
-        if not self.cookie or not self.csrf_token:
-            raise ValueError("Authentication and CSRF token required to execute transfers")
+        if not self.cookie:
+            raise FPLAuthError(
+                "No FPL session cookie on this request. Log in again to execute transfers."
+            )
+        if not self.access_token and not self.csrf_token:
+            # FPL's PingOne SSO flow does not set a csrftoken cookie, so a
+            # cookie-only session cannot authorize writes at all.
+            raise FPLAuthError(
+                "This FPL session has no OAuth access token, so transfers cannot be "
+                "authorized. Log in again with email and password to mint one."
+            )
 
         headers = self.headers.copy()
-        headers["X-CSRFToken"] = self.csrf_token
+        # Legacy Django CSRF header, only present on pre-SSO sessions. SSO sessions
+        # authorize via the X-Api-Authorization bearer set in __init__.
+        if self.csrf_token:
+            headers["X-CSRFToken"] = self.csrf_token
 
         payload = {
             "chip": chip,
             "entry": entry,
             "event": event,
             "transfers": transfers
+        }
+
+        # A successful write changes the squad, so drop any cached my-team.
+        self._cache = {
+            k: v for k, v in self._cache.items() if not k.startswith("my_team:")
         }
 
         logger.info(f"Executing transfer payload: {payload}")
@@ -659,5 +720,26 @@ class FPLClient:
             if response.status_code >= 400:
                 logger.error(f"FPL Transfer failed with status {response.status_code}: {response.text}")
                 response.raise_for_status()
-                
-            return response.json()
+
+            # FPL's transfer endpoint answers a successful write with an empty body,
+            # so response.json() would raise. Treat empty/non-JSON 2xx as success.
+            body = (response.text or "").strip()
+            if not body:
+                logger.info(
+                    "FPL accepted the transfer (HTTP %s, empty body).", response.status_code
+                )
+                return {"status": "ok", "http_status": response.status_code, "body": ""}
+
+            try:
+                return response.json()
+            except ValueError:
+                logger.warning(
+                    "FPL returned HTTP %s with a non-JSON body: %r",
+                    response.status_code,
+                    body[:200],
+                )
+                return {
+                    "status": "ok",
+                    "http_status": response.status_code,
+                    "body": body[:500],
+                }

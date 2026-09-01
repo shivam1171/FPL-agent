@@ -22,6 +22,7 @@ class AgentState(TypedDict):
     fixtures: Optional[List[Dict[str, Any]]]
     teams: Optional[List[Dict[str, Any]]]
     team_summary: Optional[Dict[str, Any]]
+    transfers_info: Optional[Dict[str, Any]]  # my-team "transfers": limit/made/cost/bank
 
     # Chip & gameweek intelligence
     chip_status: Optional[Dict[str, Any]]

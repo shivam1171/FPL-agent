@@ -4,7 +4,7 @@
 import React, { useState } from 'react';
 import { getPlayerImageUrl, handlePlayerImageError } from '../../utils/playerImage';
 
-const ApprovalModal = ({ suggestion, gameweek, onConfirm, onCancel }) => {
+const ApprovalModal = ({ suggestion, gameweek, transfersInfo = null, onConfirm, onCancel }) => {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -21,6 +21,16 @@ const ApprovalModal = ({ suggestion, gameweek, onConfirm, onCancel }) => {
 
   const playerOut = suggestion.player_out;
   const playerIn = suggestion.player_in;
+
+  // FPL charges hitCost points per transfer beyond the free allowance.
+  // transfersInfo comes straight from /api/my-team: { limit, made, cost }.
+  const ftLimit = transfersInfo?.limit;
+  const ftKnown = !transfersInfo?.error && ftLimit != null;
+  const freeRemaining = ftKnown
+    ? Math.max(0, ftLimit - (transfersInfo.made || 0))
+    : null;
+  const hitCost = transfersInfo?.cost ?? 4;
+  const costsHit = ftKnown && freeRemaining === 0;
 
   const getTeamBadge = (code) =>
     `https://resources.premierleague.com/premierleague/badges/70/t${code}.png`;
@@ -92,6 +102,36 @@ const ApprovalModal = ({ suggestion, gameweek, onConfirm, onCancel }) => {
             <strong>£{suggestion.bank_after.toFixed(1)}m</strong>
           </div>
         </div>
+
+        {costsHit && (
+          <div className="approval-hit">
+            <span>➖</span>
+            <span>
+              You have <strong>no free transfers left</strong> this gameweek, so this will cost a <strong>-{hitCost} point hit</strong>.
+              {suggestion.expected_points_gain != null && (
+                <> Net expected gain: <strong>{(suggestion.expected_points_gain - hitCost).toFixed(1)} pts</strong>.</>
+              )}
+            </span>
+          </div>
+        )}
+
+        {ftKnown && freeRemaining > 0 && (
+          <div className="approval-free">
+            <span>✅</span>
+            <span>
+              This uses <strong>1 of your {freeRemaining} free transfer{freeRemaining === 1 ? '' : 's'}</strong> — no points hit.
+            </span>
+          </div>
+        )}
+
+        {!ftKnown && (
+          <div className="approval-hit">
+            <span>❓</span>
+            <span>
+              Your free-transfer count is <strong>unavailable</strong>{transfersInfo?.error ? ' (session may have expired)' : ''}, so this could cost a <strong>-{hitCost} hit</strong>. Check the FPL site if unsure.
+            </span>
+          </div>
+        )}
 
         <div className="approval-warning">
           <span>⚠️</span>

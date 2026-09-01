@@ -159,6 +159,15 @@ const ChipAdvisor = ({ managerId, gameweek, chipStatus, gwIntelligence }) => {
                     </div>
                   )}
 
+                  {rec.validation_warnings && rec.validation_warnings.length > 0 && (
+                    <div className="chip-squad-warnings">
+                      <strong>⚠️ This squad breaks FPL rules and is not submittable as-is:</strong>
+                      <ul>
+                        {rec.validation_warnings.map((w, i) => <li key={i}>{w}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
                   {/* Full Squad Display for Wildcard / Free Hit */}
                   {rec.squad && rec.squad.length > 0 && (
                     <div className="chip-squad-panel">

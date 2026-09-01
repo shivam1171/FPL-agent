@@ -154,8 +154,8 @@ Squad:
         llm = ChatOpenAI(
             model=settings.OPENAI_MODEL,
             api_key=settings.OPENAI_API_KEY,
-            temperature=0.7,
             max_completion_tokens=1000,
+            **settings.llm_kwargs,
         )
 
         system_prompt = f"""You are an expert Fantasy Premier League (FPL) assistant. You have deep knowledge about FPL strategy, player form, fixtures, and team management.

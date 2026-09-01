@@ -1,12 +1,12 @@
 """
-Suggester node that uses GPT-4o to generate transfer recommendations.
+Suggester node that uses the configured OpenAI model to generate transfer recommendations.
 Supports regular transfers AND chip-specific advice (Wildcard, Free Hit, Bench Boost, Triple Captain).
 """
 from typing import Dict, Any, List
 from ..state import AgentState
 from ..tools.fpl_tools import find_top_performers_by_position
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from ...config import settings
 import json
 import logging
@@ -20,6 +20,8 @@ TEAM_COUNT_LIMIT = 3
 TOTAL_SQUAD_SIZE = 15
 STARTER_COUNT = 11
 COST_TOLERANCE = 0.05  # £0.05m float tolerance
+MAX_SQUAD_ATTEMPTS = 2  # LLM calls per chip squad, including retries
+MAX_REPAIR_PASSES = 3  # convergence passes over the deterministic repairs
 
 
 def _count_by(squad: List[dict], key: str) -> Dict[Any, int]:
@@ -83,6 +85,310 @@ def _validate_full_squad(squad: List[dict], total_budget: float) -> List[str]:
         violations.append("Captain and vice-captain must be different players.")
 
     return violations
+
+
+STARTER_MINIMUMS = {"GKP": 1, "DEF": 3, "MID": 2, "FWD": 1}
+STARTER_MAXIMUMS = {"GKP": 1, "DEF": 5, "MID": 5, "FWD": 3}
+
+
+def _pick_score(pick: dict, players_by_id: Dict[int, dict]) -> float:
+    """Rank a pick by form x points-per-game, falling back to form alone."""
+    ref = players_by_id.get(pick.get("player_id")) or {}
+    form = float(ref.get("form") or pick.get("form") or 0)
+    ppg = float(ref.get("points_per_game") or 0)
+    return form * ppg if ppg else form
+
+
+def _starter_formation(squad: List[dict]) -> Dict[Any, int]:
+    return _count_by([p for p in squad if p.get("is_starter")], "position")
+
+
+def _formation_is_legal(squad: List[dict]) -> bool:
+    starters = [p for p in squad if p.get("is_starter")]
+    pos = _count_by(starters, "position")
+    if len(starters) != STARTER_COUNT:
+        return False
+    return all(
+        STARTER_MINIMUMS[k] <= pos.get(k, 0) <= STARTER_MAXIMUMS[k]
+        for k in STARTER_MINIMUMS
+    )
+
+
+def _repair_starters(squad: List[dict], all_players: List[dict]) -> List[dict]:
+    """
+    Force exactly STARTER_COUNT starters in a legal formation.
+
+    The LLM routinely returns 15 players with the wrong number of is_starter
+    flags. Selection is deterministic: positional minimums filled by best score,
+    then the best remaining players up to each position's maximum. Captain and
+    vice-captain are reassigned if the repair benched them.
+    """
+    squad = [dict(p) for p in squad]
+    players_by_id = {p["id"]: p for p in all_players}
+    order = sorted(
+        range(len(squad)),
+        key=lambda i: _pick_score(squad[i], players_by_id),
+        reverse=True,
+    )
+
+    chosen: set = set()
+    counts: Dict[str, int] = {pos: 0 for pos in STARTER_MAXIMUMS}
+
+    for pos, need in STARTER_MINIMUMS.items():
+        for i in order:
+            if counts[pos] >= need:
+                break
+            if i not in chosen and (squad[i].get("position") or "") == pos:
+                chosen.add(i)
+                counts[pos] += 1
+
+    for i in order:
+        if len(chosen) >= STARTER_COUNT:
+            break
+        if i in chosen:
+            continue
+        pos = squad[i].get("position") or ""
+        if counts.get(pos, 0) >= STARTER_MAXIMUMS.get(pos, 0):
+            continue
+        chosen.add(i)
+        counts[pos] = counts.get(pos, 0) + 1
+
+    for i, pick in enumerate(squad):
+        pick["is_starter"] = i in chosen
+
+    return _ensure_captaincy(squad, all_players)
+
+
+def _ensure_captaincy(squad: List[dict], all_players: List[dict]) -> List[dict]:
+    """Guarantee exactly one captain and one distinct vice, both in the XI."""
+    players_by_id = {p["id"]: p for p in all_players}
+    starters = sorted(
+        (p for p in squad if p.get("is_starter")),
+        key=lambda p: _pick_score(p, players_by_id),
+        reverse=True,
+    )
+    if not starters:
+        return squad
+
+    if len([p for p in starters if p.get("is_captain")]) != 1:
+        for p in squad:
+            p["is_captain"] = False
+        starters[0]["is_captain"] = True
+
+    captain_id = next((p.get("player_id") for p in squad if p.get("is_captain")), None)
+    valid_vices = [
+        p for p in starters
+        if p.get("is_vice_captain") and p.get("player_id") != captain_id
+    ]
+    if len(valid_vices) != 1:
+        for p in squad:
+            p["is_vice_captain"] = False
+        for p in starters:
+            if p.get("player_id") != captain_id:
+                p["is_vice_captain"] = True
+                break
+
+    return squad
+
+
+def _repair_budget(
+    squad: List[dict], all_players: List[dict], total_budget: float
+) -> List[dict]:
+    """
+    Downgrade picks until the squad fits the budget.
+
+    Each pass swaps the single pick whose replacement frees the most money per
+    unit of score lost, biased towards bench players. Runs before the dedupe and
+    3-per-team repairs get another pass, because those are gated on spare budget
+    and stall out entirely when the squad is overspent.
+    """
+    squad = [dict(p) for p in squad]
+    players_by_id = {p["id"]: p for p in all_players}
+    squad_ids = {p.get("player_id") for p in squad}
+
+    for _ in range(TOTAL_SQUAD_SIZE):
+        total = sum(float(p.get("cost") or 0) for p in squad)
+        if total - total_budget <= COST_TOLERANCE:
+            break
+
+        team_counts = _count_by(squad, "team_name")
+        best = None  # (efficiency, index, candidate)
+
+        for i, pick in enumerate(squad):
+            pos = pick.get("position")
+            cur_cost = float(pick.get("cost") or 0)
+            cur_score = _pick_score(pick, players_by_id)
+            old_team = pick.get("team_name") or ""
+
+            for cand in all_players:
+                if cand.get("position") != pos:
+                    continue
+                if cand["id"] in squad_ids:
+                    continue
+                if cand.get("status", "a") != "a":
+                    continue
+                saving = cur_cost - cand.get("now_cost", 0) / 10
+                if saving <= 0:
+                    continue
+                cand_team = cand.get("team_name") or ""
+                if (
+                    cand_team != old_team
+                    and team_counts.get(cand_team, 0) >= TEAM_COUNT_LIMIT
+                ):
+                    continue
+
+                cand_score = _pick_score({"player_id": cand["id"]}, players_by_id)
+                efficiency = saving / (max(cur_score - cand_score, 0.0) + 0.5)
+                if not pick.get("is_starter"):
+                    efficiency *= 1.5
+                if best is None or efficiency > best[0]:
+                    best = (efficiency, i, cand)
+
+        if best is None:
+            logger.warning(
+                "Budget repair stalled at £%.1fm against £%.1fm; no downgrades left.",
+                total,
+                total_budget,
+            )
+            break
+
+        _, i, cand = best
+        old = squad[i]
+        squad_ids.discard(old.get("player_id"))
+        squad_ids.add(cand["id"])
+        squad[i] = {
+            "player_id": cand["id"],
+            "player_name": cand.get("web_name", ""),
+            "position": old.get("position"),
+            "team_name": cand.get("team_name", ""),
+            "cost": cand.get("now_cost", 0) / 10,
+            "form": float(cand.get("form") or 0),
+            "is_starter": old.get("is_starter", False),
+            "is_captain": False,
+            "is_vice_captain": False,
+            "rationale": "Auto-downgraded from %s to fit the budget." % (
+                old.get("player_name") or "a pricier pick"
+            ),
+        }
+
+    return squad
+
+
+def _extract_json(text: str) -> str:
+    """Strip markdown code fences from an LLM response, if present."""
+    if "```json" in text:
+        start = text.find("```json") + 7
+        return text[start:text.find("```", start)].strip()
+    if "```" in text:
+        start = text.find("```") + 3
+        return text[start:text.find("```", start)].strip()
+    return text.strip()
+
+
+def _build_violation_feedback(
+    violations: List[str], squad: List[dict], total_budget: float
+) -> str:
+    """Ask the model to fix a squad that broke the hard FPL rules."""
+    roster = [
+        {
+            "player_id": p.get("player_id"),
+            "player_name": p.get("player_name"),
+            "position": p.get("position"),
+            "team_name": p.get("team_name"),
+            "cost": p.get("cost"),
+            "is_starter": bool(p.get("is_starter")),
+        }
+        for p in squad
+    ]
+    total_cost = sum(float(p.get("cost") or 0) for p in squad)
+    numbered = "\n".join("%d. %s" % (i, v) for i, v in enumerate(violations, 1))
+    return (
+        "That squad is INVALID. It breaks these hard FPL rules:\n"
+        "%s\n\n"
+        "This is the squad you returned (costs are authoritative, from FPL):\n"
+        "%s\n\n"
+        "Total cost was %.1fm against a budget of %.1fm.\n\n"
+        "Fix EVERY violation above and return the corrected full JSON object in "
+        "the same format. Rules to respect while fixing:\n"
+        "- Keep exactly 15 players: 2 GKP, 5 DEF, 5 MID, 3 FWD.\n"
+        "- Total cost must not exceed %.1fm. If over, downgrade your weakest "
+        "picks or bench fodder to cheaper players - never drop below 15.\n"
+        "- Max 3 players from any one club.\n"
+        "- Only use player_id values from the lists provided earlier.\n"
+        "Return ONLY the JSON object, no prose."
+        % (numbered, json.dumps(roster, indent=1), total_cost, total_budget, total_budget)
+    )
+
+
+def _normalize_and_repair_squad(
+    recommendation: dict,
+    all_players: List[dict],
+    total_budget: float,
+    chip_name: str,
+) -> List[dict]:
+    """
+    Stamp authoritative FPL data onto an LLM squad, then apply the deterministic
+    repairs (duplicates, 3-per-team, starting XI). Constraints the repairs cannot
+    satisfy are left for the caller's validator to report.
+    """
+    squad = recommendation.get("squad") or []
+
+    # Stamp authoritative team_name + cost from FPL data so a hallucinated
+    # team_name doesn't smuggle a 4th-from-team-X past the validator.
+    players_by_id = {p["id"]: p for p in all_players}
+    for pick in squad:
+        ref = players_by_id.get(pick.get("player_id"))
+        if ref:
+            pick["team_name"] = ref.get("team_name") or pick.get("team_name", "")
+            pick["position"] = ref.get("position") or pick.get("position", "")
+            pick["cost"] = ref.get("now_cost", 0) / 10
+
+    # Dedupe and the 3-per-team repair are both gated on spare budget, so an
+    # overspent squad stalls them. Loop until stable so freeing money with the
+    # budget repair gives the other two another chance.
+    for _ in range(MAX_REPAIR_PASSES):
+        before = [(p.get("player_id"), p.get("cost")) for p in squad]
+
+        ids = [p.get("player_id") for p in squad]
+        if len(set(ids)) != len(ids):
+            dup_ids = [pid for pid in set(ids) if ids.count(pid) > 1]
+            logger.warning(
+                "%s squad has duplicate picks for player_ids=%s. Deduping.",
+                chip_name, dup_ids,
+            )
+            squad = _dedupe_squad(squad, all_players, total_budget)
+
+        team_counts = _count_by(squad, "team_name")
+        if any(c > TEAM_COUNT_LIMIT for c in team_counts.values()):
+            offenders = {t: c for t, c in team_counts.items() if c > TEAM_COUNT_LIMIT}
+            logger.warning(
+                "%s squad violates 3-per-team rule: %s. Repairing programmatically.",
+                chip_name, offenders,
+            )
+            squad = _repair_team_count(squad, all_players, total_budget)
+
+        total_cost = sum(float(p.get("cost") or 0) for p in squad)
+        if total_cost - total_budget > COST_TOLERANCE:
+            logger.warning(
+                "%s squad is £%.1fm over budget (£%.1fm / £%.1fm). Downgrading.",
+                chip_name, total_cost - total_budget, total_cost, total_budget,
+            )
+            squad = _repair_budget(squad, all_players, total_budget)
+
+        if [(p.get("player_id"), p.get("cost")) for p in squad] == before:
+            break
+
+    # Starting XI last — it never changes cost, so nothing above can undo it.
+    if not _formation_is_legal(squad):
+        logger.warning(
+            "%s squad has an illegal starting XI (%d starters, %s). Repairing programmatically.",
+            chip_name,
+            len([p for p in squad if p.get("is_starter")]),
+            dict(_starter_formation(squad)),
+        )
+        squad = _repair_starters(squad, all_players)
+
+    return _ensure_captaincy(squad, all_players)
 
 
 def _dedupe_squad(
@@ -428,8 +734,8 @@ async def _suggest_transfers(state: AgentState) -> Dict[str, Any]:
     # Initialize LLM
     llm = ChatOpenAI(
         model=settings.OPENAI_MODEL,
-        temperature=0.7,
-        api_key=settings.OPENAI_API_KEY
+        api_key=settings.OPENAI_API_KEY,
+        **settings.llm_kwargs,
     )
 
     # Prepare context for LLM
@@ -577,7 +883,7 @@ Ensure all suggestions are within budget and maintain squad composition rules (m
         HumanMessage(content=user_prompt)
     ]
 
-    logger.info("Calling GPT-4o for transfer suggestions...")
+    logger.info("Calling %s for transfer suggestions...", settings.OPENAI_MODEL)
 
     # Call LLM
     response = await llm.ainvoke(messages)
@@ -652,8 +958,8 @@ async def _suggest_full_squad(state: AgentState, chip: str) -> Dict[str, Any]:
     """Generate a complete 15-man squad suggestion for Wildcard or Free Hit."""
     llm = ChatOpenAI(
         model=settings.OPENAI_MODEL,
-        temperature=0.7,
-        api_key=settings.OPENAI_API_KEY
+        api_key=settings.OPENAI_API_KEY,
+        **settings.llm_kwargs,
     )
 
     team_summary = state["team_summary"]
@@ -765,99 +1071,96 @@ Only return the JSON after all four checks pass."""
         HumanMessage(content=user_prompt)
     ]
 
-    logger.info(f"Calling GPT-4o for {chip_name} squad suggestion...")
-    response = await llm.ainvoke(messages)
-    response_text = response.content
+    best = None  # (violations, recommendation, squad) with the fewest violations
+    attempt = 0
 
-    try:
-        if "```json" in response_text:
-            json_start = response_text.find("```json") + 7
-            json_end = response_text.find("```", json_start)
-            response_text = response_text[json_start:json_end].strip()
-        elif "```" in response_text:
-            json_start = response_text.find("```") + 3
-            json_end = response_text.find("```", json_start)
-            response_text = response_text[json_start:json_end].strip()
+    for attempt in range(1, MAX_SQUAD_ATTEMPTS + 1):
+        logger.info(
+            "Calling %s for %s squad suggestion (attempt %d/%d)...",
+            settings.OPENAI_MODEL, chip_name, attempt, MAX_SQUAD_ATTEMPTS,
+        )
+        response = await llm.ainvoke(messages)
+        response_text = response.content
 
-        recommendation = json.loads(response_text)
+        try:
+            recommendation = json.loads(_extract_json(response_text))
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "%s squad attempt %d returned unparseable JSON: %s", chip_name, attempt, e
+            )
+            if attempt == MAX_SQUAD_ATTEMPTS:
+                if best is None:
+                    logger.error("Failed to parse %s LLM response: %s", chip_name, e)
+                    return {
+                        "error": "Failed to parse %s suggestion: %s" % (chip_name, e),
+                        "step_completed": "suggestion_failed",
+                    }
+                break
+            messages.append(AIMessage(content=response_text))
+            messages.append(HumanMessage(content=(
+                "That was not valid JSON. Return ONLY the JSON object described "
+                "above - no prose, no code fences."
+            )))
+            continue
+
         recommendation["chip_name"] = chip
         recommendation["display_name"] = chip_name
+        squad = _normalize_and_repair_squad(
+            recommendation, all_players, total_budget, chip_name
+        )
+        recommendation["squad"] = squad
 
-        squad = recommendation.get("squad") or []
-
-        # Stamp authoritative team_name + cost from FPL data so a hallucinated
-        # team_name doesn't smuggle a 4th-from-team-X past the validator.
-        players_by_id = {p["id"]: p for p in all_players}
-        for pick in squad:
-            ref = players_by_id.get(pick.get("player_id"))
-            if ref:
-                pick["team_name"] = ref.get("team_name") or pick.get("team_name", "")
-                pick["position"] = ref.get("position") or pick.get("position", "")
-                pick["cost"] = ref.get("now_cost", 0) / 10
-
-        # First, replace any duplicate picks with alternatives in the same position.
-        ids = [p.get("player_id") for p in squad]
-        if len(set(ids)) != len(ids):
-            dup_ids = [pid for pid in set(ids) if ids.count(pid) > 1]
-            logger.warning(
-                "%s squad has duplicate picks for player_ids=%s. Deduping.",
-                chip_name,
-                dup_ids,
-            )
-            squad = _dedupe_squad(squad, all_players, total_budget)
-            recommendation["squad"] = squad
-
-        # Then enforce the 3-per-team rule.
-        team_counts = _count_by(squad, "team_name")
-        if any(c > TEAM_COUNT_LIMIT for c in team_counts.values()):
-            offenders = {t: c for t, c in team_counts.items() if c > TEAM_COUNT_LIMIT}
-            logger.warning(
-                "%s squad violates 3-per-team rule: %s. Repairing programmatically.",
-                chip_name,
-                offenders,
-            )
-            squad = _repair_team_count(squad, all_players, total_budget)
-            recommendation["squad"] = squad
-
-        # Recompute cost totals after any repair / cost normalization.
-        total_cost = sum(float(p.get("cost") or 0) for p in squad)
-        recommendation["total_cost"] = round(total_cost, 1)
-        recommendation["bank_remaining"] = round(total_budget - total_cost, 1)
-
-        # Final pass — surface anything we couldn't auto-fix.
         violations = _validate_full_squad(squad, total_budget)
-        if violations:
-            logger.warning("%s squad has unresolved violations: %s", chip_name, violations)
-            recommendation["validation_warnings"] = violations
+        if best is None or len(violations) < len(best[0]):
+            best = (violations, recommendation, squad)
 
-        logger.info(
-            "Generated %s squad with %d players (warnings=%d).",
-            chip_name,
-            len(squad),
-            len(violations),
+        if not violations:
+            logger.info("%s squad passed validation on attempt %d.", chip_name, attempt)
+            break
+
+        logger.warning(
+            "%s squad attempt %d has %d violation(s): %s",
+            chip_name, attempt, len(violations), violations,
+        )
+        if attempt == MAX_SQUAD_ATTEMPTS:
+            break
+
+        messages.append(AIMessage(content=response_text))
+        messages.append(
+            HumanMessage(content=_build_violation_feedback(violations, squad, total_budget))
         )
 
-        return {
-            "chip_recommendation": recommendation,
-            "transfer_suggestions": [],
-            "step_completed": "suggestion",
-            "error": None
-        }
+    violations, recommendation, squad = best
 
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse {chip_name} LLM response: {e}")
-        return {
-            "error": f"Failed to parse {chip_name} suggestion: {str(e)}",
-            "step_completed": "suggestion_failed"
-        }
+    # Recompute cost totals after any repair / cost normalization.
+    total_cost = sum(float(p.get("cost") or 0) for p in squad)
+    recommendation["total_cost"] = round(total_cost, 1)
+    recommendation["bank_remaining"] = round(total_budget - total_cost, 1)
+
+    # Surface anything neither the retries nor the repairs could fix.
+    if violations:
+        logger.warning("%s squad has unresolved violations: %s", chip_name, violations)
+        recommendation["validation_warnings"] = violations
+
+    logger.info(
+        "Generated %s squad with %d players (attempts=%d, warnings=%d).",
+        chip_name, len(squad), attempt, len(violations),
+    )
+
+    return {
+        "chip_recommendation": recommendation,
+        "transfer_suggestions": [],
+        "step_completed": "suggestion",
+        "error": None,
+    }
 
 
 async def _suggest_chip_usage(state: AgentState, chip: str) -> Dict[str, Any]:
     """Generate a recommendation on whether to use Bench Boost or Triple Captain."""
     llm = ChatOpenAI(
         model=settings.OPENAI_MODEL,
-        temperature=0.7,
-        api_key=settings.OPENAI_API_KEY
+        api_key=settings.OPENAI_API_KEY,
+        **settings.llm_kwargs,
     )
 
     team_summary = state["team_summary"]
@@ -948,7 +1251,7 @@ Please respond in this JSON format:
         HumanMessage(content=user_prompt)
     ]
 
-    logger.info(f"Calling GPT-4o for {chip_name} advice...")
+    logger.info("Calling %s for %s advice...", settings.OPENAI_MODEL, chip_name)
     response = await llm.ainvoke(messages)
     response_text = response.content
 

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Header, status
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from ..agents.graph import run_suggestion_workflow
-from ..services.fpl_client import FPLClient
+from ..services.fpl_client import FPLClient, FPLAuthError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ class SuggestionResponse(BaseModel):
     gameweek: int
     chip_status: Optional[dict] = None
     gameweek_intelligence: Optional[dict] = None
+    transfers: Optional[dict] = None
 
 
 @router.post("/suggest", response_model=SuggestionResponse)
@@ -80,6 +81,7 @@ async def get_transfer_suggestions(
             gameweek=result.get("gameweek", 0),
             chip_status=result.get("chip_status"),
             gameweek_intelligence=result.get("gameweek_intelligence"),
+            transfers=result.get("transfers"),
         )
 
     except HTTPException:
@@ -223,7 +225,7 @@ async def execute_transfer(
             p_in = players_map.get(p_in_id)
             if not p_in:
                 raise ValueError(f"Player IN {p_in_id} not found")
-            purchase_price = p_in.now_cost
+            purchase_price = int(round(p_in.now_cost))
             
             # Find selling price
             selling_price = None
@@ -236,7 +238,7 @@ async def execute_transfer(
                 # Fallback to current cost if not technically in my_team (shouldn't happen)
                 p_out = players_map.get(p_out_id)
                 if p_out:
-                    selling_price = p_out.now_cost
+                    selling_price = int(round(p_out.now_cost))
                 else:
                     raise ValueError(f"Player OUT {p_out_id} not found in user's team")
                 
@@ -244,7 +246,7 @@ async def execute_transfer(
                 "element_in": p_in_id,
                 "element_out": p_out_id,
                 "purchase_price": purchase_price,
-                "selling_price": selling_price
+                "selling_price": int(selling_price)
             })
             
         # 4. Execute the fully structured transfer
@@ -264,6 +266,12 @@ async def execute_transfer(
         
     except HTTPException:
         raise
+    except FPLAuthError as e:
+        logger.warning(f"Transfer execution not authorized: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error(f"Transfer execution heavily failed: {e}", exc_info=True)
         raise HTTPException(

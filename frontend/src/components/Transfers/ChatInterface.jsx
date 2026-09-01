@@ -25,7 +25,7 @@ const QUESTION_PROMPTS = [
   { label: "📊 DGW/BGW intel", text: "Are there any upcoming Double or Blank Gameweeks I should be planning for?" },
 ];
 
-const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestions, loading, onBack, watchlist = [], chipStatus = null, gwIntelligence = null }) => {
+const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestions, loading, onBack, watchlist = [], chipStatus = null, gwIntelligence = null, transfersInfo = null, onTransferExecuted = null }) => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
@@ -188,6 +188,29 @@ const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestio
         [{ player_in_id: suggestion.player_in.id, player_out_id: suggestion.player_out.id }],
         null,
       );
+
+      if (result.success) {
+        // Drop the executed suggestion everywhere it is rendered, so its
+        // Execute button cannot fire a second live transfer.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.suggestions
+              ? {
+                  ...m,
+                  suggestions: m.suggestions.filter(
+                    (s) =>
+                      !(
+                        s.player_in?.id === suggestion.player_in?.id &&
+                        s.player_out?.id === suggestion.player_out?.id
+                      )
+                  ),
+                }
+              : m
+          )
+        );
+        // Refetches the squad, bank, chips and free-transfer count.
+        onTransferExecuted?.(suggestion);
+      }
 
       setMessages(prev => [...prev, {
         type: 'agent',
@@ -368,6 +391,7 @@ const ChatInterface = ({ managerId, gameweek, onGetSuggestions, initialSuggestio
         <ApprovalModal
           suggestion={approvalTarget}
           gameweek={gameweek}
+          transfersInfo={transfersInfo}
           onConfirm={handleConfirmExecute}
           onCancel={() => setApprovalTarget(null)}
         />

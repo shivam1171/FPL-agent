@@ -141,6 +141,7 @@ async def run_suggestion_workflow(
             "gameweek": result.get("gameweek"),
             "chip_status": result.get("chip_status"),
             "gameweek_intelligence": result.get("gameweek_intelligence"),
+            "transfers": result.get("transfers_info"),
         }
 
         if result.get("chip_recommendation"):

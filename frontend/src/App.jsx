@@ -17,6 +17,9 @@ function App() {
   const [initialSuggestions, setInitialSuggestions] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [gameweek, setGameweek] = useState(0);
+  const [transfersInfo, setTransfersInfo] = useState(null);
+  // Bumped after a transfer executes so TeamView refetches the live squad.
+  const [teamRefreshKey, setTeamRefreshKey] = useState(0);
   const [chipStatus, setChipStatus] = useState(null);
   const [gwIntelligence, setGwIntelligence] = useState(null);
   
@@ -30,6 +33,23 @@ function App() {
     setManagerId(id);
     setFplCookie(cookie);
     setIsAuthenticated(true);
+  };
+
+  // A completed transfer invalidates the squad, the bank and the free-transfer
+  // count, and the executed suggestion must not stay clickable.
+  const handleTransferExecuted = (executed) => {
+    setTeamRefreshKey((k) => k + 1);
+    if (executed) {
+      setInitialSuggestions((prev) =>
+        (prev || []).filter(
+          (s) =>
+            !(
+              s.player_in?.id === executed.player_in?.id &&
+              s.player_out?.id === executed.player_out?.id
+            )
+        )
+      );
+    }
   };
 
   const handleGetSuggestions = async (feedback = null, currentSuggestions = null) => {
@@ -54,6 +74,7 @@ function App() {
         if (result.gameweek) setGameweek(result.gameweek);
         if (result.chip_status) setChipStatus(result.chip_status);
         if (result.gameweek_intelligence) setGwIntelligence(result.gameweek_intelligence);
+        if (result.transfers) setTransfersInfo(result.transfers);
       }
       return result;
     } catch (error) {
@@ -108,10 +129,13 @@ function App() {
             onGetSuggestions={() => handleGetSuggestions()} 
             watchlist={watchlist}
             setWatchlist={setWatchlist}
+            refreshKey={teamRefreshKey}
             onTeamLoaded={(data) => {
               if (data?.chip_status) setChipStatus(data.chip_status);
               if (data?.gameweek_intelligence) setGwIntelligence(data.gameweek_intelligence);
               if (data?.gameweek) setGameweek(data.gameweek);
+              // Keeps the free-transfer count behind the -4 warning current.
+              if (data?.transfers) setTransfersInfo(data.transfers);
             }}
           />
         </div>
@@ -126,6 +150,8 @@ function App() {
             watchlist={watchlist}
             chipStatus={chipStatus}
             gwIntelligence={gwIntelligence}
+            transfersInfo={transfersInfo}
+            onTransferExecuted={handleTransferExecuted}
           />
         </div>
         <div style={{ display: view === 'leagues' ? 'block' : 'none', height: '100%' }}>

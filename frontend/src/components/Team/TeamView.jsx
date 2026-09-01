@@ -66,7 +66,7 @@ const MiniSparkline = ({ values, width = 60, height = 20 }) => {
   );
 };
 
-const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist, onTeamLoaded }) => {
+const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist, onTeamLoaded, refreshKey = 0 }) => {
   const [team, setTeam] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -77,7 +77,7 @@ const TeamView = ({ managerId, onGetSuggestions, watchlist, setWatchlist, onTeam
   const [compareA, setCompareA] = useState(null);
   const [compareB, setCompareB] = useState(null);
 
-  useEffect(() => { loadTeam(); }, [managerId]);
+  useEffect(() => { loadTeam(); }, [managerId, refreshKey]);
 
   const loadTeam = async () => {
     try {

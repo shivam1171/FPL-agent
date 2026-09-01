@@ -49,6 +49,7 @@ async def data_fetcher_node(state: AgentState) -> Dict[str, Any]:
         try:
             my_team = await client.get_my_team(manager_id)
             team_picks = my_team.picks
+            transfers_info = my_team.transfers or {}
         except Exception as e:
             # A 403 here means the SSO access token is missing or expired —
             # worth calling out, since re-login fixes it and nothing else will.
@@ -65,6 +66,9 @@ async def data_fetcher_node(state: AgentState) -> Dict[str, Any]:
             # Note: NOT current_gameweek. That's the GW we're planning transfers
             # for, and its picks endpoint 404s until the deadline passes.
             team_picks = await client.get_latest_team_picks(manager_id)
+            # Without my-team we cannot know the free-transfer count; say so
+            # rather than implying the transfer is free.
+            transfers_info = {"error": str(e) or "my-team unavailable"}
 
         # Fetch chip status and gameweek intelligence
         chip_status = None
@@ -103,6 +107,7 @@ async def data_fetcher_node(state: AgentState) -> Dict[str, Any]:
             "current_team_players": [_to_dict(p) for p in current_team_players],
             "fixtures": [_to_dict(f) for f in fixtures],
             "team_summary": _to_dict(team_summary),
+            "transfers_info": transfers_info,
             "gameweek": current_gameweek,
             "chip_status": _to_dict(chip_status),
             "gameweek_intelligence": _to_dict(gameweek_intelligence),
