@@ -1,0 +1,300 @@
+/*
+ * Tailwind v4 + shadcn token layer. Light-first; `.dark` carries the dark
+ * palette and is toggled on <html> (bootstrapped in index.html, switched via
+ * src/lib/theme.js with transitions suppressed for the swap).
+ */
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --radius: 0.75rem;
+
+  /* Clean light surface: warm off-white ground, white cards, slate ink. */
+  --background: oklch(0.977 0.005 255);
+  --foreground: oklch(0.225 0.022 260);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.225 0.022 260);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.225 0.022 260);
+
+  /* FPL green, darkened for contrast on light surfaces. */
+  --primary: oklch(0.578 0.128 158);
+  --primary-foreground: oklch(0.995 0.003 250);
+
+  --secondary: oklch(0.945 0.008 255);
+  --secondary-foreground: oklch(0.32 0.025 260);
+
+  --muted: oklch(0.945 0.008 255);
+  --muted-foreground: oklch(0.545 0.02 258);
+
+  --accent: oklch(0.945 0.008 255);
+  --accent-foreground: oklch(0.225 0.022 260);
+
+  --destructive: oklch(0.577 0.215 27);
+  --destructive-foreground: oklch(0.995 0.003 250);
+
+  --success: oklch(0.578 0.128 158);
+  --warning: oklch(0.555 0.13 66);
+  --info: oklch(0.546 0.19 262);
+
+  --border: oklch(0.225 0.022 260 / 10%);
+  --input: oklch(0.225 0.022 260 / 14%);
+  --ring: oklch(0.578 0.128 158 / 45%);
+
+  /* Pitch view: grass wash + stripe tone, a few shades greener than the ground. */
+  --pitch: oklch(0.578 0.128 158 / 12%);
+  --pitch-stripe: oklch(0.578 0.128 158 / 7%);
+
+  /* Depth comes from layered shadows, not borders. */
+  --shadow-raised:
+    0 1px 2px oklch(0.25 0.02 260 / 0.05), 0 2px 8px oklch(0.25 0.02 260 / 0.06);
+  --shadow-overlay:
+    0 1px 2px oklch(0.25 0.02 260 / 0.06), 0 8px 24px oklch(0.25 0.02 260 / 0.12),
+    0 24px 56px oklch(0.25 0.02 260 / 0.12);
+}
+
+.dark {
+  --background: oklch(0.145 0.028 264);
+  --foreground: oklch(0.985 0.005 250);
+
+  --card: oklch(0.196 0.031 264);
+  --card-foreground: oklch(0.985 0.005 250);
+
+  --popover: oklch(0.176 0.03 264);
+  --popover-foreground: oklch(0.985 0.005 250);
+
+  --primary: oklch(0.782 0.183 155);
+  --primary-foreground: oklch(0.145 0.028 264);
+
+  --secondary: oklch(0.259 0.035 260);
+  --secondary-foreground: oklch(0.985 0.005 250);
+
+  --muted: oklch(0.259 0.035 260);
+  --muted-foreground: oklch(0.708 0.028 256);
+
+  --accent: oklch(0.259 0.035 260);
+  --accent-foreground: oklch(0.985 0.005 250);
+
+  --destructive: oklch(0.637 0.208 25);
+  --destructive-foreground: oklch(0.985 0.005 250);
+
+  --success: oklch(0.782 0.183 155);
+  --warning: oklch(0.837 0.161 82);
+  --info: oklch(0.623 0.188 260);
+
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.782 0.183 155 / 45%);
+
+  --pitch: oklch(0.782 0.183 155 / 10%);
+  --pitch-stripe: oklch(0.782 0.183 155 / 6%);
+
+  --shadow-raised:
+    0 1px 2px oklch(0 0 0 / 0.28), 0 2px 6px oklch(0 0 0 / 0.22);
+  --shadow-overlay:
+    0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px oklch(0 0 0 / 0.34),
+    0 24px 56px oklch(0 0 0 / 0.28);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Outfit', 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /*
+   * Concentric radius pairs. Outer = inner + padding, so a container padded by
+   * one step up uses the radius one step up. Never mix arbitrary values.
+   */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 12px);
+
+  --shadow-raised: var(--shadow-raised);
+  --shadow-overlay: var(--shadow-overlay);
+
+  /* The one easing curve the better-ui recipes prescribe. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@layer base {
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* App-wide conventions: named-property transitions and press feedback. */
+  button {
+    transition-property: background-color, border-color, color, box-shadow, scale;
+    transition-duration: 150ms;
+    transition-timing-function: var(--ease-standard);
+  }
+
+  button:not([data-static]):not(:disabled):active {
+    scale: 0.96;
+  }
+
+  /* Subtle scrollbars: thin, rounded, track invisible, thumb only on need. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(from var(--foreground) l c h / 18%) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: oklch(from var(--foreground) l c h / 18%);
+    background-clip: content-box;
+    border: 3px solid transparent;
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: oklch(from var(--foreground) l c h / 30%);
+  }
+}
+
+@layer components {
+  /*
+   * Staggered entrance for infrequent, sequence-communicating mounts (login
+   * features, stat rows, chip grid). ~60ms steps, fills backwards so late
+   * items stay invisible until their turn. Not for high-frequency toggles.
+   */
+  .stagger-item {
+    animation: enter-up 0.35s var(--ease-standard) both;
+  }
+  .stagger-item:nth-child(1) { animation-delay: 0ms; }
+  .stagger-item:nth-child(2) { animation-delay: 60ms; }
+  .stagger-item:nth-child(3) { animation-delay: 120ms; }
+  .stagger-item:nth-child(4) { animation-delay: 180ms; }
+  .stagger-item:nth-child(5) { animation-delay: 240ms; }
+  .stagger-item:nth-child(6) { animation-delay: 300ms; }
+  .stagger-item:nth-child(7) { animation-delay: 360ms; }
+  .stagger-item:nth-child(8) { animation-delay: 420ms; }
+
+  /* Interactive-card affordance: a slight lift, interruptible via transition. */
+  .hover-lift {
+    transition-property: translate, box-shadow, background-color, border-color;
+    transition-duration: 150ms;
+    transition-timing-function: var(--ease-standard);
+  }
+  .hover-lift:hover {
+    translate: 0 -2px;
+    box-shadow: var(--shadow-overlay);
+  }
+}
+
+/*
+ * Football ambience. Slow float for backdrop balls, a squash-and-stretch
+ * bounce for loaders, and a soft pulse for the urgent deadline clock. All
+ * transform/opacity, all guarded by prefers-reduced-motion below.
+ */
+@keyframes ball-bounce {
+  0%, 100% { translate: 0 0; scale: 1.06 0.9; }
+  18% { scale: 1 1; }
+  50% { translate: 0 -60%; scale: 0.97 1.04; }
+  82% { scale: 1 1; }
+}
+
+@keyframes ball-shadow {
+  0%, 100% { scale: 1 1; opacity: 0.9; }
+  50% { scale: 0.55 1; opacity: 0.4; }
+}
+
+/*
+ * Living tactics board (login backdrop). Every dot animates between two
+ * formation positions through shared keyframes driven by per-element CSS
+ * variables; the ball cycles four pass waypoints. Transform-only.
+ */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; scale: 1; }
+  50% { opacity: 0.65; scale: 0.92; }
+}
+
+@layer utilities {
+  .animate-ball-bounce {
+    animation: ball-bounce 0.8s ease-in-out infinite;
+    transform-origin: bottom;
+  }
+  .animate-ball-shadow {
+    animation: ball-shadow 0.8s ease-in-out infinite;
+  }
+  .animate-soft-pulse {
+    animation: soft-pulse 2s ease-in-out infinite;
+  }
+}
+
+@keyframes enter-up {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger-item,
+  .animate-ball-bounce,
+  .animate-ball-shadow,
+  .animate-soft-pulse {
+    animation: none;
+  }
+  .hover-lift,
+  .hover-lift:hover {
+    translate: 0 0;
+  }
+}
+
+/* Theme swaps must snap, not smear across every transitioning property. */
+.theme-transitions-off *,
+.theme-transitions-off *::before,
+.theme-transitions-off *::after {
+  transition: none !important;
+  animation: none !important;
+}

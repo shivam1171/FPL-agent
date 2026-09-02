@@ -2,12 +2,25 @@
  * Main App component — FPL Agent
  */
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
+import { Eye, LogOut } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
+import { PitchLines } from '@/components/ui/football';
 import LoginForm from './components/Auth/LoginForm';
 import TeamView from './components/Team/TeamView';
 import ChatInterface from './components/Transfers/ChatInterface';
 import LeaguesView from './components/Leagues/LeaguesView';
 import { transferAPI } from './services/api';
-import './styles/App.css';
+import './styles/theme.css';
+
+const NAV = [
+  { id: 'team', label: 'Dashboard' },
+  { id: 'leagues', label: 'Competitions' },
+  { id: 'chat', label: 'AI Advisor' },
+];
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -22,7 +35,7 @@ function App() {
   const [teamRefreshKey, setTeamRefreshKey] = useState(0);
   const [chipStatus, setChipStatus] = useState(null);
   const [gwIntelligence, setGwIntelligence] = useState(null);
-  
+
   // Watchlist state lifted here so both TeamView and ChatInterface can access it
   const [watchlist, setWatchlist] = useState(() => {
     const saved = localStorage.getItem('fpl_watchlist');
@@ -58,7 +71,7 @@ function App() {
       setView('chat');
       setInitialSuggestions([]);
     }
-    
+
     // Inject watchlist context into the first request
     let enrichedFeedback = feedback;
     if (!feedback && watchlist.length > 0) {
@@ -66,7 +79,7 @@ function App() {
       // We pass this as part of the feedback for initial generation
       enrichedFeedback = `IMPORTANT CONTEXT — The manager is currently watching these players on their watchlist: ${watchlistContext}. Please factor these players into your analysis and mention any relevant observations about watched players in your suggestions.`;
     }
-    
+
     try {
       const result = await transferAPI.getSuggestions(managerId, enrichedFeedback || feedback, currentSuggestions);
       if (!feedback && result.success) {
@@ -96,37 +109,67 @@ function App() {
   }
 
   return (
-    <div className="app">
-      <div className="app-header-container animate-stagger">
-        <header className="app-header">
-          <div className="app-header-left">
-            <span className="app-logo">⚽ FPL Agent</span>
-            <h1>Manager #{managerId}</h1>
+    <div className="flex h-screen flex-col bg-background">
+      <header className="relative shrink-0 overflow-hidden border-b border-border bg-card">
+        <PitchLines />
+        <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4">
+          <div className="flex min-w-0 items-baseline gap-2.5">
+            <span className="font-display text-base font-extrabold tracking-tight">
+              FPL<span className="text-primary"> Agent</span>
+            </span>
+            <span className="hidden truncate text-xs text-muted-foreground sm:inline">
+              Manager #{managerId}
+            </span>
           </div>
-          <nav className="header-nav">
-            <button className={`nav-tab ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}>
-              🏟️ Dashboard
-            </button>
-            <button className={`nav-tab ${view === 'leagues' ? 'active' : ''}`} onClick={() => setView('leagues')}>
-              🏆 Competitions
-            </button>
-            <button className={`nav-tab ${view === 'chat' ? 'active' : ''}`} onClick={() => setView('chat')}>
-              🤖 AI Advisor
-            </button>
-          </nav>
-          <div className="header-actions">
-            {watchlist.length > 0 && <span className="gw-badge" title="Players on watchlist">👁️ {watchlist.length}</span>}
-            {gameweek > 0 && <span className="gw-badge">GW {gameweek}</span>}
-            <button className="back-btn" onClick={handleLogout}>Logout</button>
-          </div>
-        </header>
-      </div>
 
-      <main className="app-main">
-        <div style={{ display: view === 'team' ? 'block' : 'none', height: '100%' }}>
-          <TeamView 
-            managerId={managerId} 
-            onGetSuggestions={() => handleGetSuggestions()} 
+          <nav className="flex items-center gap-1 rounded-md bg-secondary/60 p-1" aria-label="Main">
+            {NAV.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setView(id)}
+                className={cn(
+                  'relative rounded-sm px-3 py-1.5 text-xs font-semibold',
+                  'transition-[color] duration-150 ease-[cubic-bezier(0.2,0,0,1)]',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  view === id ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {view === id && (
+                  <motion.span
+                    layoutId="nav-pill"
+                    className="absolute inset-0 rounded-sm bg-card shadow-raised"
+                    transition={{ type: 'spring', duration: 0.35, bounce: 0 }}
+                  />
+                )}
+                <span className="relative">{label}</span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="flex items-center gap-2">
+            {watchlist.length > 0 && (
+              <Badge variant="outline" title="Players on watchlist">
+                <Eye strokeWidth={2} /> {watchlist.length}
+              </Badge>
+            )}
+            {gameweek > 0 && <Badge variant="primary">GW {gameweek}</Badge>}
+            <ThemeToggle />
+            <Button variant="ghost" size="icon-sm" onClick={handleLogout} aria-label="Log out">
+              <LogOut strokeWidth={2} />
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main className="min-h-0 flex-1">
+        <div
+          className="h-full overflow-y-auto"
+          style={{ display: view === 'team' ? 'block' : 'none' }}
+        >
+          <div className="mx-auto max-w-6xl px-4 py-6">
+          <TeamView
+            managerId={managerId}
+            onGetSuggestions={() => handleGetSuggestions()}
             watchlist={watchlist}
             setWatchlist={setWatchlist}
             refreshKey={teamRefreshKey}
@@ -138,9 +181,14 @@ function App() {
               if (data?.transfers) setTransfersInfo(data.transfers);
             }}
           />
+          </div>
         </div>
-        <div style={{ display: view === 'chat' ? 'block' : 'none', height: '100%' }}>
-          <ChatInterface 
+
+        <div
+          className="mx-auto h-full max-w-6xl px-4 py-4"
+          style={{ display: view === 'chat' ? 'block' : 'none' }}
+        >
+          <ChatInterface
             managerId={managerId}
             gameweek={gameweek}
             onGetSuggestions={handleGetSuggestions}
@@ -154,8 +202,14 @@ function App() {
             onTransferExecuted={handleTransferExecuted}
           />
         </div>
-        <div style={{ display: view === 'leagues' ? 'block' : 'none', height: '100%' }}>
-          <LeaguesView managerId={managerId} />
+
+        <div
+          className="h-full overflow-y-auto"
+          style={{ display: view === 'leagues' ? 'block' : 'none' }}
+        >
+          <div className="mx-auto max-w-6xl px-4 py-6">
+            <LeaguesView managerId={managerId} />
+          </div>
         </div>
       </main>
     </div>

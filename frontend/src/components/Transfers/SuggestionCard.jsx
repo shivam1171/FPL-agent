@@ -1,153 +1,186 @@
 /**
- * Individual transfer suggestion card
+ * One transfer suggestion, rendered as a ranked row. The collapsed row carries
+ * only the decision surface — who out, who in, expected gain, actions — and the
+ * rationale, stat comparison and finances fold out on demand.
  */
 import React from 'react';
-import { getPlayerImageUrl, handlePlayerImageError } from '../../utils/playerImage';
+import { AnimatePresence, motion } from 'motion/react';
+import { ArrowRight, Check, ChevronDown, RefreshCw, Sparkles } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { getPlayerImageUrl, handlePlayerImageError } from '@/utils/playerImage';
 
-const SuggestionCard = ({ suggestion, onReplace, onExecute }) => {
+const teamBadge = (code) =>
+  `https://resources.premierleague.com/premierleague/badges/70/t${code}.png`;
+
+function PlayerCell({ player, direction }) {
+  const out = direction === 'out';
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <div className="relative shrink-0">
+        <img
+          src={getPlayerImageUrl(player.code)}
+          alt=""
+          onError={handlePlayerImageError(player)}
+          className={cn('h-11 w-9 object-contain object-bottom', out && 'saturate-50')}
+        />
+        <img
+          src={teamBadge(player.team_code)}
+          alt=""
+          className="absolute -bottom-0.5 -right-1 size-4 drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)]"
+        />
+      </div>
+      <div className="min-w-0">
+        <div
+          className={cn(
+            'mb-0.5 text-[0.55rem] font-bold uppercase tracking-widest',
+            out ? 'text-destructive' : 'text-primary'
+          )}
+        >
+          {out ? 'Out' : 'In'}
+        </div>
+        <div className="truncate text-xs font-bold leading-tight">{player.web_name}</div>
+        <div className="truncate text-[0.65rem] tabular-nums text-muted-foreground">
+          {player.position} · £{(player.now_cost / 10).toFixed(1)}m
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompareStat({ label, out, inn }) {
+  return (
+    <div className="rounded-md bg-secondary/40 p-2.5 ring-1 ring-border/50">
+      <div className="text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 flex items-center gap-1.5 text-xs tabular-nums">
+        <span className="text-destructive/90">{out}</span>
+        <ArrowRight className="size-3 text-muted-foreground" strokeWidth={2} />
+        <span className="font-semibold text-primary">{inn}</span>
+      </div>
+    </div>
+  );
+}
+
+const SuggestionCard = ({ suggestion, rank, expanded, onToggle, onReplace, onExecute }) => {
   const playerOut = suggestion.player_out;
   const playerIn = suggestion.player_in;
 
-  const priorityClass = {
-    1: 'priority-high',
-    2: 'priority-medium',
-    3: 'priority-low',
-  }[suggestion.priority] || 'priority-medium';
-
-  const getTeamBadge = (code) =>
-    `https://resources.premierleague.com/premierleague/badges/70/t${code}.png`;
-
   return (
-    <div className={`suggestion-card ${priorityClass}`}>
-      <div className="card-header-visual">
-         <div className="priority-tag">Priority {suggestion.priority}</div>
-         <div className="expected-gain">+{suggestion.expected_points_gain.toFixed(1)} pts</div>
-      </div>
+    <div className="rounded-lg bg-card shadow-raised ring-1 ring-border/60">
+      <div className="flex items-center gap-3 p-3">
+        {rank != null && (
+          <span className="hidden w-5 shrink-0 text-center font-display text-sm font-bold text-muted-foreground/70 sm:block">
+            {rank}
+          </span>
+        )}
 
-      <div className="transfer-visuals">
-        {/* Player Out */}
-        <div className="player-visual out">
-            <div className="player-card-header">
-                <span className="action-label">OUT</span>
-                <span className="player-price">£{(playerOut.now_cost / 10).toFixed(1)}m</span>
-            </div>
-            <div className="player-image-container">
-                <img
-                    src={getPlayerImageUrl(playerOut.code)}
-                    alt={playerOut.web_name}
-                    className="player-face"
-                    onError={handlePlayerImageError(playerOut)}
-                />
-                <img 
-                    src={getTeamBadge(playerOut.team_code)} 
-                    alt={playerOut.team_name} 
-                    className="team-badge-mini"
-                />
-            </div>
-            <div className="player-name">{playerOut.web_name}</div>
-            <div className="player-meta">{playerOut.position} • {playerOut.team_name}</div>
-        </div>
+        {/* The out → in pair is also the expand toggle. */}
+        <button
+          type="button"
+          data-static=""
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="grid min-w-0 flex-1 grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <PlayerCell player={playerOut} direction="out" />
+          <ArrowRight className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
+          <PlayerCell player={playerIn} direction="in" />
+        </button>
 
-        {/* Arrow */}
-        <div className="transfer-arrow">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-        </div>
-
-        {/* Player In */}
-        <div className="player-visual in">
-            <div className="player-card-header">
-                <span className="action-label">IN</span>
-                <span className="player-price">£{(playerIn.now_cost / 10).toFixed(1)}m</span>
-            </div>
-            <div className="player-image-container">
-                <img
-                    src={getPlayerImageUrl(playerIn.code)}
-                    alt={playerIn.web_name}
-                    className="player-face"
-                    onError={handlePlayerImageError(playerIn)}
-                />
-                <img 
-                    src={getTeamBadge(playerIn.team_code)} 
-                    alt={playerIn.team_name} 
-                    className="team-badge-mini"
-                />
-            </div>
-            <div className="player-name">{playerIn.web_name}</div>
-            <div className="player-meta">{playerIn.position} • {playerIn.team_name}</div>
-        </div>
-      </div>
-
-      <div className="rationale-box">
-        <h4>AI Rationale</h4>
-        <p>{suggestion.rationale}</p>
-      </div>
-
-      <div className="stats-comparison">
-        <div className="stat-row">
-            <span className="stat-label">Form</span>
-            <span className="stat-val out">{playerOut.form}</span>
-            <span className="stat-val in">{playerIn.form}</span>
-        </div>
-        <div className="stat-row">
-            <span className="stat-label">Fixtures</span>
-            <span className="stat-val out">{suggestion.player_out_fixtures_msg || 'Mixed'}</span>
-            <span className="stat-val in">{suggestion.player_in_fixtures_msg || 'Good'}</span>
-        </div>
-      </div>
-      
-      {suggestion.captain_name && (
-        <div className="captaincy-recommendation">
-          <h4>Captaincy Picks</h4>
-          <div className="captain-picks">
-            <div className="pick">
-              <span className="role-badge cap">C</span> 
-              <span>{suggestion.captain_name}</span>
-            </div>
-            {suggestion.vice_captain_name && (
-              <div className="pick">
-                <span className="role-badge vice">VC</span> 
-                <span>{suggestion.vice_captain_name}</span>
-              </div>
-            )}
+        {/* The decision number — largest text in the row. */}
+        <div className="shrink-0 text-right">
+          <div className="font-display text-lg font-extrabold tabular-nums leading-none text-primary">
+            +{suggestion.expected_points_gain.toFixed(1)}
+          </div>
+          <div className="text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
+            pts
           </div>
         </div>
-      )}
 
-      <div className="financial-summary">
-           <span>Bank change: {suggestion.cost_change > 0 ? '-' : '+'}£{Math.abs(suggestion.cost_change).toFixed(1)}m</span>
-           <span>Remaining: £{suggestion.bank_after.toFixed(1)}m</span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {onExecute && (
+            <Button size="sm" onClick={() => onExecute(suggestion)}>
+              <Check strokeWidth={2} />
+              <span className="hidden md:inline">Execute</span>
+            </Button>
+          )}
+          {onReplace && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => onReplace(suggestion)}
+              aria-label="Replace this suggestion"
+              title="Request a different transfer for this slot"
+            >
+              <RefreshCw strokeWidth={2} />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onToggle}
+            aria-label={expanded ? 'Hide details' : 'Show details'}
+          >
+            <ChevronDown
+              strokeWidth={2}
+              className={cn(
+                'transition-[rotate] duration-150 ease-[cubic-bezier(0.2,0,0,1)]',
+                expanded && 'rotate-180'
+              )}
+            />
+          </Button>
+        </div>
       </div>
 
-      {(onReplace || onExecute) && (
-        <div className="card-actions-bottom">
-           {onExecute && (
-             <button 
-                 className="execute-btn" 
-                 onClick={() => onExecute(suggestion)}
-                 title="Make this transfer right now in FPL"
-                 style={{ background: 'var(--accent-green)', color: '#000', fontWeight: 'bold' }}
-             >
-                 ✅ Approve & Execute
-             </button>
-           )}
-           {onReplace && (
-             <button 
-                 className="replace-btn" 
-                 onClick={() => onReplace(suggestion)}
-                 title="Request a completely different transfer option to replace this one."
-             >
-                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                     <polyline points="23 4 23 10 17 10"></polyline>
-                     <polyline points="1 20 1 14 7 14"></polyline>
-                     <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                 </svg>
-                 Replace this option
-             </button>
-           )}
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="detail"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: 'spring', duration: 0.35, bounce: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="space-y-3 border-t border-border p-3.5">
+              <div className="flex gap-2.5 rounded-md bg-secondary/40 p-3 ring-1 ring-border/50">
+                <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" strokeWidth={2} />
+                <p className="text-[0.72rem] leading-relaxed text-secondary-foreground/90">
+                  {suggestion.rationale}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <CompareStat label="Form" out={playerOut.form} inn={playerIn.form} />
+                <CompareStat
+                  label="Fixtures"
+                  out={suggestion.player_out_fixtures_msg || 'Mixed'}
+                  inn={suggestion.player_in_fixtures_msg || 'Good'}
+                />
+                <CompareStat
+                  label="Price"
+                  out={`£${(playerOut.now_cost / 10).toFixed(1)}m`}
+                  inn={`£${(playerIn.now_cost / 10).toFixed(1)}m`}
+                />
+                <div className="rounded-md bg-secondary/40 p-2.5 ring-1 ring-border/50">
+                  <div className="text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
+                    Bank after
+                  </div>
+                  <div className="mt-1 text-xs font-semibold tabular-nums">
+                    £{suggestion.bank_after.toFixed(1)}m
+                    <span className="ml-1 font-normal text-muted-foreground">
+                      ({suggestion.cost_change > 0 ? '−' : '+'}£
+                      {Math.abs(suggestion.cost_change).toFixed(1)}m)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

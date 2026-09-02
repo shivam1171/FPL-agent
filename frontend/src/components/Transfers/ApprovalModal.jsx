@@ -2,7 +2,76 @@
  * Transfer approval confirmation modal
  */
 import React, { useState } from 'react';
-import { getPlayerImageUrl, handlePlayerImageError } from '../../utils/playerImage';
+import {
+  ArrowRight, AlertTriangle, CheckCircle2, HelpCircle, Loader2, Check,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import { getPlayerImageUrl, handlePlayerImageError } from '@/utils/playerImage';
+
+const teamBadge = (code) =>
+  `https://resources.premierleague.com/premierleague/badges/70/t${code}.png`;
+
+function Notice({ tone, icon: Icon, children }) {
+  const tones = {
+    destructive: 'bg-destructive/10 text-destructive ring-destructive/25',
+    primary: 'bg-primary/10 text-primary ring-primary/25',
+    warning: 'bg-warning/10 text-warning ring-warning/25',
+  };
+  return (
+    <div
+      className={cn(
+        'mx-5 flex items-start gap-2.5 rounded-md p-3 text-xs leading-relaxed ring-1',
+        tones[tone]
+      )}
+    >
+      <Icon className="mt-px size-4 shrink-0" strokeWidth={2} />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function Side({ player, direction }) {
+  const out = direction === 'out';
+  return (
+    <div className="flex flex-col items-center gap-1 text-center">
+      <span
+        className={cn(
+          'text-[0.6rem] font-bold uppercase tracking-widest',
+          out ? 'text-destructive' : 'text-primary'
+        )}
+      >
+        {out ? 'Out' : 'In'}
+      </span>
+      <div className="relative">
+        <img
+          src={getPlayerImageUrl(player.code)}
+          alt=""
+          onError={handlePlayerImageError(player)}
+          className={cn(
+            'h-20 object-contain drop-shadow-[0_4px_8px_rgba(0,0,0,0.22)]',
+            out && 'saturate-50'
+          )}
+        />
+        <img
+          src={teamBadge(player.team_code)}
+          alt=""
+          className="absolute -bottom-1 -right-1 size-5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)]"
+        />
+      </div>
+      <div className="text-sm font-bold">{player.web_name}</div>
+      <div className="text-[0.65rem] text-muted-foreground">
+        {player.position} · {player.team_name}
+      </div>
+      <div className="text-xs font-bold tabular-nums text-muted-foreground">
+        £{(player.now_cost / 10).toFixed(1)}m
+      </div>
+    </div>
+  );
+}
 
 const ApprovalModal = ({ suggestion, gameweek, transfersInfo = null, onConfirm, onCancel }) => {
   const [executing, setExecuting] = useState(false);
@@ -26,143 +95,106 @@ const ApprovalModal = ({ suggestion, gameweek, transfersInfo = null, onConfirm, 
   // transfersInfo comes straight from /api/my-team: { limit, made, cost }.
   const ftLimit = transfersInfo?.limit;
   const ftKnown = !transfersInfo?.error && ftLimit != null;
-  const freeRemaining = ftKnown
-    ? Math.max(0, ftLimit - (transfersInfo.made || 0))
-    : null;
+  const freeRemaining = ftKnown ? Math.max(0, ftLimit - (transfersInfo.made || 0)) : null;
   const hitCost = transfersInfo?.cost ?? 4;
   const costsHit = ftKnown && freeRemaining === 0;
 
-  const getTeamBadge = (code) =>
-    `https://resources.premierleague.com/premierleague/badges/70/t${code}.png`;
-
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !executing && onCancel()}>
-      <div className="modal-content approval-modal">
-        <div className="approval-modal-header">
-          <span className="approval-modal-icon">⚡</span>
-          <div>
-            <h2>Confirm Transfer</h2>
-            {gameweek > 0 && <p className="approval-gw">Gameweek {gameweek}</p>}
+    <Dialog open onOpenChange={(open) => !open && !executing && onCancel()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Confirm transfer</DialogTitle>
+          <DialogDescription>Gameweek {gameweek}</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex items-center justify-center gap-6 px-5 pb-4">
+          <Side player={playerOut} direction="out" />
+          <ArrowRight className="size-6 shrink-0 text-muted-foreground" strokeWidth={2} />
+          <Side player={playerIn} direction="in" />
+        </div>
+
+        <div className="mx-5 mb-3 space-y-1 rounded-md bg-secondary/40 p-3 ring-1 ring-border/50">
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">Expected points gain</span>
+            <strong className="tabular-nums text-primary">
+              +{suggestion.expected_points_gain.toFixed(1)} pts
+            </strong>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">Bank after transfer</span>
+            <strong className="tabular-nums">£{suggestion.bank_after.toFixed(1)}m</strong>
           </div>
         </div>
 
-        <div className="approval-players">
-          {/* Player Out */}
-          <div className="approval-player out">
-            <div className="approval-player-img-wrap">
-              <img
-                src={getPlayerImageUrl(playerOut.code)}
-                alt={playerOut.web_name}
-                className="approval-player-img"
-                onError={handlePlayerImageError(playerOut)}
-              />
-              <img src={getTeamBadge(playerOut.team_code)} alt="" className="approval-badge" />
-            </div>
-            <span className="approval-direction-label out-label">OUT</span>
-            <strong className="approval-player-name">{playerOut.web_name}</strong>
-            <span className="approval-player-meta">{playerOut.position} · {playerOut.team_name}</span>
-            <span className="approval-player-price">£{(playerOut.now_cost / 10).toFixed(1)}m</span>
-          </div>
-
-          <div className="approval-arrow">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-
-          {/* Player In */}
-          <div className="approval-player in">
-            <div className="approval-player-img-wrap">
-              <img
-                src={getPlayerImageUrl(playerIn.code)}
-                alt={playerIn.web_name}
-                className="approval-player-img"
-                onError={handlePlayerImageError(playerIn)}
-              />
-              <img src={getTeamBadge(playerIn.team_code)} alt="" className="approval-badge" />
-            </div>
-            <span className="approval-direction-label in-label">IN</span>
-            <strong className="approval-player-name">{playerIn.web_name}</strong>
-            <span className="approval-player-meta">{playerIn.position} · {playerIn.team_name}</span>
-            <span className="approval-player-price">£{(playerIn.now_cost / 10).toFixed(1)}m</span>
-          </div>
-        </div>
-
-        <div className="approval-stats">
-          <div className="approval-stat-row">
-            <span>Expected pts gain</span>
-            <strong className="text-green">+{suggestion.expected_points_gain.toFixed(1)} pts</strong>
-          </div>
-          <div className="approval-stat-row">
-            <span>Cost change</span>
-            <strong>{suggestion.cost_change > 0 ? '-' : '+'}£{Math.abs(suggestion.cost_change).toFixed(1)}m</strong>
-          </div>
-          <div className="approval-stat-row">
-            <span>Bank after transfer</span>
-            <strong>£{suggestion.bank_after.toFixed(1)}m</strong>
-          </div>
-        </div>
-
-        {costsHit && (
-          <div className="approval-hit">
-            <span>➖</span>
-            <span>
-              You have <strong>no free transfers left</strong> this gameweek, so this will cost a <strong>-{hitCost} point hit</strong>.
+        <div className="space-y-2">
+          {costsHit && (
+            <Notice tone="destructive" icon={AlertTriangle}>
+              You have <strong>no free transfers left</strong> this gameweek, so this will cost
+              a <strong>-{hitCost} point hit</strong>.
               {suggestion.expected_points_gain != null && (
-                <> Net expected gain: <strong>{(suggestion.expected_points_gain - hitCost).toFixed(1)} pts</strong>.</>
+                <>
+                  {' '}
+                  Net expected gain:{' '}
+                  <strong className="tabular-nums">
+                    {(suggestion.expected_points_gain - hitCost).toFixed(1)} pts
+                  </strong>
+                  .
+                </>
               )}
-            </span>
-          </div>
-        )}
+            </Notice>
+          )}
 
-        {ftKnown && freeRemaining > 0 && (
-          <div className="approval-free">
-            <span>✅</span>
-            <span>
-              This uses <strong>1 of your {freeRemaining} free transfer{freeRemaining === 1 ? '' : 's'}</strong> — no points hit.
-            </span>
-          </div>
-        )}
+          {ftKnown && freeRemaining > 0 && (
+            <Notice tone="primary" icon={CheckCircle2}>
+              This uses{' '}
+              <strong>
+                1 of your {freeRemaining} free transfer{freeRemaining === 1 ? '' : 's'}
+              </strong>{' '}
+              — no points hit.
+            </Notice>
+          )}
 
-        {!ftKnown && (
-          <div className="approval-hit">
-            <span>❓</span>
-            <span>
-              Your free-transfer count is <strong>unavailable</strong>{transfersInfo?.error ? ' (session may have expired)' : ''}, so this could cost a <strong>-{hitCost} hit</strong>. Check the FPL site if unsure.
-            </span>
-          </div>
-        )}
+          {!ftKnown && (
+            <Notice tone="warning" icon={HelpCircle}>
+              Your free-transfer count is <strong>unavailable</strong>
+              {transfersInfo?.error ? ' (session may have expired)' : ''}, so this could cost a{' '}
+              <strong>-{hitCost} hit</strong>. Check the FPL site if unsure.
+            </Notice>
+          )}
 
-        <div className="approval-warning">
-          <span>⚠️</span>
-          <span>This will make a <strong>live transfer</strong> in your FPL team. This action cannot be undone before the gameweek deadline.</span>
+          <Notice tone="warning" icon={AlertTriangle}>
+            This makes a <strong>live transfer</strong> in your FPL team. It cannot be undone
+            before the gameweek deadline.
+          </Notice>
+
+          {error && (
+            <Notice tone="destructive" icon={AlertTriangle}>
+              {error}
+            </Notice>
+          )}
         </div>
 
-        {error && (
-          <div className="approval-error">
-            ❌ {error}
-          </div>
-        )}
-
-        <div className="modal-actions">
-          <button onClick={onCancel} className="cancel-btn" disabled={executing}>
+        <DialogFooter className="pt-4">
+          <Button variant="ghost" onClick={onCancel} disabled={executing}>
             Cancel
-          </button>
-          <button onClick={handleConfirm} className="confirm-btn" disabled={executing}>
+          </Button>
+          <Button onClick={handleConfirm} disabled={executing}>
             {executing ? (
-              <span className="btn-loading">
-                <span className="btn-spinner" />
-                Executing...
-              </span>
+              <>
+                <Loader2 className="animate-spin" strokeWidth={2} />
+                Executing…
+              </>
             ) : (
-              '✅ Confirm Transfer'
+              <>
+                <Check strokeWidth={2} />
+                Confirm transfer
+              </>
             )}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 
 export default ApprovalModal;
-
