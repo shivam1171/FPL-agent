@@ -150,11 +150,16 @@ Squad:
         if request.context and request.context.get("watchlist"):
             watchlist_context = f"\nWatchlist Players:\n{json.dumps(request.context['watchlist'], indent=1, default=str)}"
 
-        # Create LLM
+        # max_completion_tokens goes through model_kwargs on purpose:
+        # langchain-openai 0.2.8 only exposes the older max_tokens field, which
+        # the gpt-5 family rejects outright ("Unsupported parameter:
+        # 'max_tokens' ... Use 'max_completion_tokens' instead").
         llm = ChatOpenAI(
             model=settings.OPENAI_MODEL,
             api_key=settings.OPENAI_API_KEY,
-            max_completion_tokens=1000,
+            model_kwargs={
+                "max_completion_tokens": settings.OPENAI_MAX_COMPLETION_TOKENS
+            },
             **settings.llm_kwargs,
         )
 
@@ -189,6 +194,22 @@ IMPORTANT RULES:
         # Call LLM
         response = await llm.ainvoke(messages)
         reply = response.content.strip()
+
+        if not reply:
+            # A reasoning model can spend its whole completion budget on hidden
+            # reasoning tokens and return no visible text at all. Surfacing that
+            # as an error beats handing the UI an empty chat bubble.
+            metadata = response.response_metadata or {}
+            logger.error(
+                "Empty chat reply: finish_reason=%s token_usage=%s. Raise "
+                "OPENAI_MAX_COMPLETION_TOKENS if finish_reason is 'length'.",
+                metadata.get("finish_reason"),
+                metadata.get("token_usage"),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The model returned an empty response. Please try again.",
+            )
 
         # Check if the LLM flagged this as needing new suggestions
         is_suggestion_request = reply.startswith("[NEEDS_SUGGESTIONS]")

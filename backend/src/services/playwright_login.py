@@ -8,12 +8,12 @@ client-side and the redirect URL contains a per-request ``state`` and
 real browser through the flow.
 
 Steps:
-    1. Open https://fantasy.premierleague.com/
-    2. Dismiss the OneTrust cookie banner if present
-    3. Click the visible "Log in" button → redirects to account.premierleague.com
-    4. Fill #username (email) and #password, click "Sign in"
-    5. Wait for the OAuth code exchange to land us back on fantasy.premierleague.com
-    6. Collect cookies AND extract the access_token from localStorage
+    1. Open https://fantasy.premierleague.com/ with analytics/consent/ad requests
+       blocked, which keeps the OneTrust banner from rendering at all
+    2. Click the visible "Log in" button → redirects to account.premierleague.com
+    3. Fill #username (email) and #password, click #btnSignIn
+    4. Wait for the OAuth code exchange to land us back on fantasy.premierleague.com
+    5. Collect cookies AND extract the access_token from localStorage
        (under ``oidc.user:<authority>:<client_id>``) — endpoints like
        ``/api/my-team/`` require it as ``X-Api-Authorization: Bearer <jwt>``.
 
@@ -30,12 +30,41 @@ import asyncio
 import json
 import logging
 import sys
+import tempfile
+import time
+from pathlib import Path
 from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
 
 FPL_HOME_URL = "https://fantasy.premierleague.com/"
 ACCOUNT_HOST = "account.premierleague.com"
+
+# Clicking "Log in" kicks off a client-side SSO handshake before the browser
+# leaves the page. It normally redirects in ~5s but has been measured at 25s+,
+# so a single timeout can't both identify a no-op click and tolerate a slow
+# handshake. Probe briefly, re-click, then wait out the handshake once.
+CANDIDATE_PROBE_MS = 8000
+SSO_HANDSHAKE_MS = 45000
+TOKEN_POLL_MS = 15000
+
+# None of this is needed to drive the OAuth flow, and it dominates page load
+# time. Blocking cookielaw.org additionally stops the consent banner from ever
+# rendering, so there is nothing to dismiss. Note the absence of
+# launchdarkly.com — the account page gates its form render on it.
+BLOCKED_HOSTS = (
+    "doubleclick.net", "google-analytics.com", "googletagmanager.com",
+    "googlesyndication.com", "facebook.net", "connect.facebook",
+    "snapchat.com", "platform.twitter.com", "tiktok.com",
+    "adobedtm.com", "omtrdc.net", "demdex.net", "scorecardresearch.com",
+    "quantserve.com", "hotjar.com", "newrelic.com", "nr-data.net",
+    "cookielaw.org", "onetrust.com", "braze.com", "amplitude.com",
+)
+BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
+
+# The auth provider renders this inline instead of navigating when credentials
+# are rejected. Racing the redirect against it turns a full-timeout wait into ~1s.
+SSO_ERROR_SELECTOR = "p.ping-sso__error"
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -68,7 +97,7 @@ async def login_to_fpl(
     password: str,
     *,
     headless: bool = True,
-    timeout_ms: int = 30000,
+    timeout_ms: int = 45000,
 ) -> FPLSession:
     """
     Log in to Fantasy Premier League with email + password using a real browser.
@@ -133,6 +162,7 @@ def _login_to_fpl_sync(
             viewport={"width": 1280, "height": 800},
             locale="en-US",
         )
+        _install_request_blocking(context)
         page = context.new_page()
         page.set_default_timeout(timeout_ms)
 
@@ -142,13 +172,9 @@ def _login_to_fpl_sync(
 
             _dismiss_cookie_banner(page)
 
-            # Give React a moment to hydrate event handlers — networkidle never
-            # fires on FPL (constant analytics traffic), so just sleep briefly.
-            page.wait_for_timeout(1500)
-
-            # The login CTA is usually an <a> link, not a <button>. Match either.
-            # We may match multiple ("Log in" appears in the user menu too); try
-            # each in order until one actually navigates to account.premierleague.com.
+            # The login CTA has been both an <a> and a <button>, and "Log in"
+            # also appears in the (usually hidden) user menu, so match either tag
+            # and try each visible hit until one reaches account.premierleague.com.
             candidates = page.locator(
                 'a:visible:has-text("Log in"), button:visible:has-text("Log in")'
             )
@@ -165,34 +191,58 @@ def _login_to_fpl_sync(
             logger.info("Playwright: found %d 'Log in' candidates", count)
 
             navigated = False
-            per_attempt_timeout = max(5000, timeout_ms // max(count, 1))
             for i in range(count):
+                logger.info("Playwright: clicking 'Log in' candidate %d/%d", i + 1, count)
                 try:
-                    logger.info("Playwright: clicking 'Log in' candidate %d/%d", i + 1, count)
-                    with page.expect_navigation(
-                        url=lambda u: ACCOUNT_HOST in u,
-                        timeout=per_attempt_timeout,
-                    ):
-                        candidates.nth(i).click()
+                    candidates.nth(i).click(timeout=CANDIDATE_PROBE_MS)
+                except Exception as click_err:
+                    # Most likely the consent overlay is intercepting pointer
+                    # events, which only happens if the blocklist missed it.
+                    logger.info("Candidate %d click failed: %s", i + 1, click_err)
+                    _dismiss_cookie_banner(page)
+                    continue
+                try:
+                    page.wait_for_url(
+                        lambda u: ACCOUNT_HOST in u,
+                        timeout=CANDIDATE_PROBE_MS,
+                        wait_until="commit",
+                    )
                     navigated = True
                     break
                 except PWTimeoutError:
                     logger.info(
-                        "Candidate %d did not navigate (still at %s); trying next",
+                        "Candidate %d has not navigated yet (still at %s)",
                         i + 1, page.url,
                     )
-                    continue
+
+            if not navigated:
+                # Two things look identical from here: a click swallowed because
+                # React had not hydrated yet, and a handshake that is merely slow.
+                # Re-click to cover the first, then wait long to cover the second.
+                logger.info("Playwright: re-clicking, then waiting up to %dms for SSO redirect", SSO_HANDSHAKE_MS)
+                try:
+                    candidates.first.click(timeout=CANDIDATE_PROBE_MS)
+                except Exception as click_err:
+                    logger.info("Re-click failed (may already be navigating): %s", click_err)
+                try:
+                    page.wait_for_url(
+                        lambda u: ACCOUNT_HOST in u,
+                        timeout=SSO_HANDSHAKE_MS,
+                        wait_until="commit",
+                    )
+                    navigated = True
+                except PWTimeoutError:
+                    pass
 
             if not navigated:
                 try:
-                    current_url = page.url
-                    title = page.title()
-                    body_text = page.locator("body").inner_text()[:500]
+                    shot_path = Path(tempfile.gettempdir()) / "fpl_login_failure.png"
                     logger.error(
                         "No 'Log in' candidate navigated. url=%s title=%r body[:500]=%r",
-                        current_url, title, body_text,
+                        page.url, page.title(), page.locator("body").inner_text()[:500],
                     )
-                    page.screenshot(path="/tmp/fpl_login_failure.png", full_page=True)
+                    page.screenshot(path=str(shot_path), full_page=True)
+                    logger.error("Saved failure screenshot to %s", shot_path)
                 except Exception as diag_err:
                     logger.error("Diagnostic capture failed: %s", diag_err)
                 raise FPLLoginError(
@@ -217,44 +267,37 @@ def _login_to_fpl_sync(
             page.locator("input#password").fill(password)
 
             logger.info("Playwright: submitting credentials")
-            sign_in = page.get_by_role("button", name="Sign in").first
-            try:
-                with page.expect_navigation(
-                    url=lambda u: "fantasy.premierleague.com" in u
-                    and ACCOUNT_HOST not in u,
-                    timeout=timeout_ms,
+            # "Sign in" also matches the Google/Facebook/X/Apple social buttons,
+            # so prefer the submit button's id and only fall back to the role.
+            sign_in = page.locator("button#btnSignIn")
+            if sign_in.count() == 0:
+                sign_in = page.get_by_role("button", name="Sign in", exact=True)
+            sign_in.first.click()
+            redirected = _await_signin_outcome(page, SSO_HANDSHAKE_MS)
+
+            if not redirected and ACCOUNT_HOST in page.url:
+                html = page.content().lower()
+                if (
+                    "captcha" in html
+                    or "cf-chl" in html
+                    or "checking your browser" in html
                 ):
-                    sign_in.click()
-            except PWTimeoutError:
-                # Stayed on account.premierleague.com → most likely bad creds.
-                if ACCOUNT_HOST in page.url:
-                    html = page.content().lower()
-                    if (
-                        "captcha" in html
-                        or "cf-chl" in html
-                        or "checking your browser" in html
-                    ):
-                        raise FPLLoginError(
-                            "FPL served a Cloudflare/captcha challenge. Retry, "
-                            "or call with headless=False to solve it manually.",
-                            code="captcha",
-                        )
                     raise FPLLoginError(
-                        "Invalid email or password — auth provider rejected the "
-                        "credentials.",
-                        code="invalid_credentials",
+                        "FPL served a Cloudflare/captcha challenge. Retry, "
+                        "or call with headless=False to solve it manually.",
+                        code="captcha",
                     )
-                # Otherwise we did navigate, just not where expected — fall through.
+                raise FPLLoginError(
+                    _sso_error_text(page)
+                    or "Invalid email or password — auth provider rejected the "
+                    "credentials.",
+                    code="invalid_credentials",
+                )
 
-            # Give the OAuth code exchange a moment to settle and write the
-            # token to localStorage. networkidle on FPL never actually fires
-            # (constant analytics traffic), so swallow the timeout.
-            try:
-                page.wait_for_load_state("networkidle", timeout=8000)
-            except PWTimeoutError:
-                pass
-
-            access_token = _extract_access_token(page)
+            # The SPA finishes its PKCE code exchange after the redirect lands, so
+            # poll for the token. Waiting on networkidle instead would always burn
+            # its full timeout — FPL's analytics traffic never goes quiet.
+            access_token = _wait_for_access_token(page, TOKEN_POLL_MS)
             if not access_token:
                 raise FPLLoginError(
                     "Logged in, but no OAuth access token was found in "
@@ -286,8 +329,34 @@ def _login_to_fpl_sync(
             browser.close()
 
 
+def _install_request_blocking(context: Any) -> None:
+    """Abort analytics, consent and decorative requests to speed up page loads."""
+
+    def handler(route: Any) -> None:
+        request = route.request
+        try:
+            if request.resource_type in BLOCKED_RESOURCE_TYPES or any(
+                host in request.url for host in BLOCKED_HOSTS
+            ):
+                route.abort()
+            else:
+                route.continue_()
+        except Exception:
+            # The page can navigate out from under an in-flight route.
+            pass
+
+    context.route("**/*", handler)
+
+
 def _dismiss_cookie_banner(page: Any) -> None:
-    """Best-effort click of the OneTrust / FPL cookie consent banner."""
+    """
+    Best-effort click of the OneTrust / FPL cookie consent banner.
+
+    Blocking cookielaw.org normally stops the banner rendering at all, so this
+    is a safety net for if FPL starts serving the script first-party. Each
+    selector is probed with ``count()`` first because a plain ``click`` would
+    block for its full timeout on every selector when the banner is absent.
+    """
     candidates = [
         "#onetrust-accept-btn-handler",
         'button:has-text("Accept All Cookies")',
@@ -296,11 +365,53 @@ def _dismiss_cookie_banner(page: Any) -> None:
     ]
     for sel in candidates:
         try:
-            page.locator(sel).first.click(timeout=2500)
+            locator = page.locator(sel).first
+            if locator.count() == 0:
+                continue
+            locator.click(timeout=2500)
             logger.info("Playwright: dismissed cookie banner (%s)", sel)
             return
         except Exception:
             continue
+
+
+def _sso_error_text(page: Any) -> str | None:
+    """Inline validation message shown by the auth provider, if any."""
+    try:
+        error = page.locator(SSO_ERROR_SELECTOR).first
+        if error.count() and error.is_visible():
+            return error.inner_text().strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _await_signin_outcome(page: Any, timeout_ms: int) -> bool:
+    """
+    Wait for the sign-in click to resolve. Returns True if we got redirected
+    back to FPL, False if the auth provider rejected us or nothing happened.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        url = page.url
+        if "fantasy.premierleague.com" in url and ACCOUNT_HOST not in url:
+            return True
+        if _sso_error_text(page):
+            return False
+        page.wait_for_timeout(250)
+    return False
+
+
+def _wait_for_access_token(page: Any, timeout_ms: int) -> str | None:
+    """Poll localStorage until the SPA's PKCE code exchange writes the token."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        token = _extract_access_token(page)
+        if token:
+            return token
+        if time.monotonic() >= deadline:
+            return None
+        page.wait_for_timeout(250)
 
 
 def _extract_access_token(page: Any) -> str | None:

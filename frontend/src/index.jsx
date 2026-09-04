@@ -4,6 +4,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // Dev-only: ?ui-preview renders the primitive/screen harness instead of the app,
 // so the new UI can be reviewed without a live FPL session. lazy() must live at
@@ -30,12 +31,14 @@ const PreviewComponent =
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    {PreviewComponent ? (
-      <React.Suspense fallback={null}>
-        <PreviewComponent />
-      </React.Suspense>
-    ) : (
-      <App />
-    )}
+    <ErrorBoundary>
+      {PreviewComponent ? (
+        <React.Suspense fallback={null}>
+          <PreviewComponent />
+        </React.Suspense>
+      ) : (
+        <App />
+      )}
+    </ErrorBoundary>
   </React.StrictMode>
 );

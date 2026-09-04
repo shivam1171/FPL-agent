@@ -13,6 +13,11 @@ import SuggestionCard from './SuggestionCard';
 
 const keyOf = (s) => `${s.player_out?.id}-${s.player_in?.id}`;
 
+// Suggestions originate from an LLM and reach us as unvalidated dicts, so a row
+// missing its players or gain would throw mid-render and blank the whole app.
+const isRenderable = (s) =>
+  !!s && !!s.player_out && !!s.player_in && Number.isFinite(s.expected_points_gain);
+
 const SuggestionList = ({ suggestions, loading, embedded = false, onReplace, onExecute }) => {
   const [expandedKey, setExpandedKey] = useState(null);
 
@@ -27,7 +32,9 @@ const SuggestionList = ({ suggestions, loading, embedded = false, onReplace, onE
     );
   }
 
-  if (!suggestions || suggestions.length === 0) {
+  const renderable = (suggestions || []).filter(isRenderable);
+
+  if (renderable.length === 0) {
     return (
       <div className="ui-root flex items-center gap-2 rounded-md bg-secondary/40 p-4 text-xs text-muted-foreground ring-1 ring-border/50">
         <Inbox className="size-4" strokeWidth={2} />
@@ -37,7 +44,7 @@ const SuggestionList = ({ suggestions, loading, embedded = false, onReplace, onE
   }
 
   // The captaincy pick is generated once per suggestion set; surface it once.
-  const captaincy = suggestions.find((s) => s.captain_name);
+  const captaincy = renderable.find((s) => s.captain_name);
 
   return (
     <div className="ui-root">
@@ -62,7 +69,7 @@ const SuggestionList = ({ suggestions, loading, embedded = false, onReplace, onE
 
       <div className="space-y-2">
         <AnimatePresence initial={false} mode="popLayout">
-          {suggestions.map((suggestion, index) => (
+          {renderable.map((suggestion, index) => (
             <motion.div
               key={keyOf(suggestion)}
               layout

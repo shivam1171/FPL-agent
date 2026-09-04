@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # reasoning models (o-series, gpt-5 family) reject anything but 1.0. Keep the
     # default at 1.0 so both families work; override in .env for older models.
     OPENAI_TEMPERATURE: float = 1.0
+    # Reasoning models spend this budget on hidden reasoning tokens before
+    # emitting any visible text, so too low a value returns an empty reply with
+    # finish_reason="length". gpt-5-mini was measured using 1000-1500 reasoning
+    # tokens on chat questions, so leave generous headroom. Only tokens actually
+    # produced are billed, so a high ceiling costs nothing.
+    OPENAI_MAX_COMPLETION_TOKENS: int = 4000
 
     # Security (optional - not currently used, but reserved for future JWT/session features)
     SECRET_KEY: str = "placeholder-secret-key-not-currently-used"

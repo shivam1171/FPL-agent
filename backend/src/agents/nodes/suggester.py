@@ -921,23 +921,54 @@ Ensure all suggestions are within budget and maintain squad composition rules (m
             suggestions, current_team_players, all_players
         )
 
-        # Enhance suggestions with full player data
+        # Enhance suggestions with full player data. A suggestion that cannot be
+        # fully hydrated is dropped rather than passed on half-built: the API
+        # serialises suggestions as raw dicts, so a missing player_out or
+        # expected_points_gain would reach the UI and crash the render.
+        hydrated = []
         for suggestion in suggestions:
             player_out = next(
-                (p for p in all_players if p["id"] == suggestion["player_out_id"]),
+                (p for p in all_players if p["id"] == suggestion.get("player_out_id")),
                 None
             )
             player_in = next(
-                (p for p in all_players if p["id"] == suggestion["player_in_id"]),
+                (p for p in all_players if p["id"] == suggestion.get("player_in_id")),
                 None
             )
 
-            if player_out and player_in:
-                suggestion["player_out"] = player_out
-                suggestion["player_in"] = player_in
-                suggestion["bank_after"] = budget_available - suggestion["cost_change"]
+            if not player_out or not player_in:
+                logger.warning(
+                    "Dropping suggestion with unresolvable player ids "
+                    "(out=%s '%s', in=%s '%s')",
+                    suggestion.get("player_out_id"), suggestion.get("player_out_name"),
+                    suggestion.get("player_in_id"), suggestion.get("player_in_name"),
+                )
+                continue
 
-        logger.info(f"Generated {len(suggestions)} transfer suggestions")
+            try:
+                cost_change = float(suggestion.get("cost_change") or 0.0)
+                expected_gain = float(suggestion.get("expected_points_gain") or 0.0)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Dropping suggestion with non-numeric cost_change/expected_points_gain: %s",
+                    {k: suggestion.get(k) for k in ("cost_change", "expected_points_gain")},
+                )
+                continue
+
+            suggestion["player_out"] = player_out
+            suggestion["player_in"] = player_in
+            suggestion["cost_change"] = cost_change
+            suggestion["expected_points_gain"] = expected_gain
+            suggestion["bank_after"] = budget_available - cost_change
+            suggestion.setdefault("rationale", "")
+            hydrated.append(suggestion)
+
+        dropped = len(suggestions) - len(hydrated)
+        suggestions = hydrated
+        logger.info(
+            "Generated %d transfer suggestions (%d dropped as incomplete)",
+            len(suggestions), dropped,
+        )
 
         return {
             "transfer_suggestions": suggestions,

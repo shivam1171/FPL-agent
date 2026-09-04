@@ -36,7 +36,7 @@ npm run build     # production build
 ```
 
 ### Environment setup
-- Backend: copy `backend/.env.example` → `backend/.env`, fill in `OPENAI_API_KEY` (model defaults to `gpt-4o`) and optionally `SECRET_KEY`, `DEBUG`, `CORS_ORIGINS`
+- Backend: copy `backend/.env.example` → `backend/.env`, fill in `OPENAI_API_KEY` (model defaults to `gpt-5-mini`) and optionally `OPENAI_MODEL`, `OPENAI_MAX_COMPLETION_TOKENS`, `SECRET_KEY`, `DEBUG`, `CORS_ORIGINS`
 - Frontend: copy `frontend/.env.example` → `frontend/.env` (sets `VITE_API_BASE_URL`)
 - FPL authentication uses a browser session cookie passed from the frontend — it is never persisted to disk
 
@@ -87,6 +87,14 @@ Entry point: `run_suggestion_workflow()` in `graph.py` — initialises state, co
 
 Separate from the agent pipeline. Accepts a free-form message, fetches live team context from FPL (including chip status and DGW/BGW data), builds a system prompt with squad data, and streams a single GPT-4o call. Returns `is_suggestion_request=True` when the LLM detects the user wants new transfer suggestions (signalled by `[NEEDS_SUGGESTIONS]` prefix).
 
+##### Token budget on reasoning models (blank-reply gotcha)
+
+The default model is `gpt-5-mini`, a reasoning model. Reasoning tokens are billed against `max_completion_tokens` and are emitted *before* any visible text, so too small a budget returns `finish_reason="length"` with completely empty `content` — the UI renders a blank chat bubble with no error anywhere. Measured reasoning alone at 960–1500 tokens for ordinary chat questions, so the old 1000 cap blanked out intermittently. `OPENAI_MAX_COMPLETION_TOKENS` (default 4000) now sets this; only tokens actually produced are billed, so a high ceiling is free. `chat.py` also raises a 502 rather than returning an empty `reply`, and logs `finish_reason` and `token_usage` so the cause is visible in the logs.
+
+Two related traps:
+- **Pass it via `model_kwargs`, not `max_completion_tokens=`.** langchain-openai 0.2.8 only exposes the older `max_tokens` field; passing `max_completion_tokens=` as a top-level kwarg works but logs a warning as it silently shunts the value into `model_kwargs`. Don't "fix" that by switching to `max_tokens` — the gpt-5 family rejects it with `Unsupported parameter: 'max_tokens' is not supported with this model`.
+- **Don't move the cap into `settings.llm_kwargs`.** That property is shared with the three `suggester.py` call sites, which are deliberately uncapped because a Wildcard/Free Hit response is a full 15-man squad JSON that a cap could truncate mid-structure.
+
 #### Chip Strategy & Gameweek Intelligence
 
 - `models/chips.py` — `ChipInfo`, `ChipStatus`, `GameweekDetail`, `GameweekIntelligence`, `ChipRecommendation` models
@@ -124,8 +132,11 @@ The Vite dev server proxies `/api` → `http://localhost:8000`, so no CORS issue
 FPL uses a PingOne OAuth/PKCE flow at `account.premierleague.com` with a per-request `state` and `code_challenge`, so the redirect URL cannot be constructed — a real browser must drive the flow. Quirks worth knowing before editing:
 
 - **Multiple "Log in" elements exist on the FPL homepage.** The user-menu toggle button and the main CTA both have the text "Log in", and the main CTA is sometimes an `<a>` link rather than a `<button>`. The implementation matches both (`a:visible:has-text("Log in"), button:visible:has-text("Log in")`) and tries each candidate in turn, accepting the one that actually navigates to `account.premierleague.com`. Don't replace this with a single `.first` selector — the menu toggle is often first and clicking it is a no-op for the OAuth flow.
-- **Hydration race.** `wait_until="domcontentloaded"` returns before React hydrates and attaches click handlers, making clicks no-op. Use `wait_until="load"` plus a small `wait_for_timeout` buffer. `networkidle` is unreliable on FPL (constant analytics traffic).
-- **Diagnostic capture on failure.** When no candidate navigates, the code logs `page.url`, `title`, and `body[:500]`, plus a screenshot to `/tmp/fpl_login_failure.png`. Check Render logs for these on login failures — they distinguish a Cloudflare/captcha challenge from a layout change.
+- **The SSO redirect is slow and highly variable.** Clicking "Log in" starts a client-side handshake before the browser leaves the page; measured between 2s and 25s. A single timeout can't distinguish "this click was a no-op" from "the handshake is slow", so the code probes each candidate for `CANDIDATE_PROBE_MS`, then re-clicks and waits `SSO_HANDSHAKE_MS`. Don't collapse these back into one timeout — a tight one intermittently fails login, and a loose one makes a genuinely broken selector take a minute to report.
+- **Request blocking is load-bearing, not just an optimisation.** `_install_request_blocking` aborts images/media/fonts and the ad/analytics/consent hosts in `BLOCKED_HOSTS`. Besides roughly halving page load, blocking `cookielaw.org` stops the OneTrust banner rendering — its `onetrust-pc-dark-filter` overlay intercepts pointer events and blocks the "Log in" click outright. `_dismiss_cookie_banner` remains as a fallback and probes with `count()` before clicking, so it costs ~0ms when the banner is absent. Keep `launchdarkly.com` unblocked: the account page gates its form render on it.
+- **Don't wait on `networkidle`.** FPL's analytics traffic never goes quiet, so it always burns its full timeout. Poll for the thing you actually need (see `_wait_for_access_token`).
+- **Fail fast on bad credentials.** The auth provider renders `p.ping-sso__error` ("Invalid username and/or password") inline within ~1s instead of navigating. `_await_signin_outcome` races the redirect against that element, so a wrong password reports in seconds rather than after the full handshake timeout. Its text is surfaced to the user directly.
+- **Diagnostic capture on failure.** When no candidate navigates, the code logs `page.url`, `title`, and `body[:500]`, plus a screenshot to `tempfile.gettempdir()/fpl_login_failure.png`. Check Render logs for these on login failures — they distinguish a Cloudflare/captcha challenge from a layout change.
 
 ## graphify
 
